@@ -19,25 +19,25 @@ polkadot-runtime = { path = "../runtime" }
 polkadot-executor = { path = "../executor" }
 polkadot-network = { path = "../network"  }
 polkadot-rpc = { path = "../rpc" }
-sr-io = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-sr-api = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-sr-primitives = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-primitives = { package = "substrate-primitives", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-client = { package = "substrate-client", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-client-db = { package = "substrate-client-db", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-substrate-executor = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-substrate-network = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-consensus_common = { package = "substrate-consensus-common", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-grandpa = { package = "substrate-finality-grandpa", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-grandpa_primitives = { package = "substrate-finality-grandpa-primitives", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-inherents = { package = "substrate-inherents", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-service = { package = "substrate-service", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-telemetry = { package = "substrate-telemetry", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-transaction_pool = { package = "substrate-transaction-pool", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-substrate-keystore = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-srml-babe = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-master" }
-srml-staking = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-master" }
-im-online = { package = "srml-im-online", git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-master" }
-authority-discovery = { package = "substrate-authority-discovery", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-babe = { package = "substrate-consensus-babe", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-babe-primitives = { package = "substrate-consensus-babe-primitives", git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-master" }
+sr-io = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+sr-api = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+sr-primitives = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+primitives = { package = "substrate-primitives", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+client = { package = "substrate-client", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+client-db = { package = "substrate-client-db", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+substrate-executor = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+substrate-network = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+consensus_common = { package = "substrate-consensus-common", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+grandpa = { package = "substrate-finality-grandpa", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+grandpa_primitives = { package = "substrate-finality-grandpa-primitives", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+inherents = { package = "substrate-inherents", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+service = { package = "substrate-service", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+telemetry = { package = "substrate-telemetry", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+transaction_pool = { package = "substrate-transaction-pool", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+substrate-keystore = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+paint-babe = { git = "https://github.com/cheme/substrate", default-features = false, branch = "overlay_change" }
+paint-staking = { git = "https://github.com/cheme/substrate", default-features = false, branch = "overlay_change" }
+im-online = { package = "paint-im-online", git = "https://github.com/cheme/substrate", default-features = false, branch = "overlay_change" }
+authority-discovery = { package = "substrate-authority-discovery", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+babe = { package = "substrate-consensus-babe", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+babe-primitives = { package = "substrate-consensus-babe-primitives", git = "https://github.com/cheme/substrate", default-features = false, branch = "overlay_change" }
