@@ -9,6 +9,7 @@ edition = "2018"
 futures = "0.1.17"
 futures03 = { package = "futures-preview", version = "0.3.0-alpha.18", features = ["compat"] }
 client = { package = "substrate-client", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+client-api = { package = "substrate-client-api", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 primitives = { package = "substrate-primitives", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 substrate-network = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 consensus_common = { package = "substrate-consensus-common", git = "https://github.com/cheme/substrate", branch = "overlay_change" }

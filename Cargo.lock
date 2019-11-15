@@ -34,6 +34,7 @@ dependencies = [
  "polkadot-parachain 0.6.17",
  "polkadot-primitives 0.6.17",
  "substrate-client 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
+ "substrate-client-api 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-primitives 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
 ]
 
@@ -3312,6 +3313,7 @@ dependencies = [
  "polkadot-service 0.6.17",
  "polkadot-validation 0.6.17",
  "substrate-client 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
+ "substrate-client-api 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-consensus-common 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-keyring 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-network 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
@@ -3504,6 +3506,7 @@ dependencies = [
  "sr-primitives 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-authority-discovery 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-client 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
+ "substrate-client-api 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-client-db 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-consensus-babe 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",
  "substrate-consensus-babe-primitives 2.0.0 (git+https://github.com/cheme/substrate?branch=overlay_change)",

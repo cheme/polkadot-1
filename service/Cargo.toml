@@ -24,6 +24,7 @@ sr-api = { git = "https://github.com/cheme/substrate", branch = "overlay_change"
 sr-primitives = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 primitives = { package = "substrate-primitives", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 client = { package = "substrate-client", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
+client-api = { package = "substrate-client-api", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 client-db = { package = "substrate-client-db", git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 substrate-executor = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
 substrate-network = { git = "https://github.com/cheme/substrate", branch = "overlay_change" }
