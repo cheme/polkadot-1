@@ -27,7 +27,7 @@ use polkadot_primitives::Hash;
 use polkadot_primitives::parachain::{Id as ParaId, BlockData, Message};
 use log::warn;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::io;
@@ -76,7 +76,7 @@ impl Store {
 	/// Create a new `Store` with given config on disk.
 	pub fn new(config: Config) -> io::Result<Self> {
 		let mut db_config = DatabaseConfig::with_columns(Some(columns::NUM_COLUMNS));
-		db_config.memory_budget = config.cache_size;
+		db_config.memory_budget = HashMap::new();
 
 		let path = config.path.to_str().ok_or_else(|| io::Error::new(
 			io::ErrorKind::Other,

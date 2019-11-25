@@ -66,7 +66,7 @@
 //! order to win a later auction, then it is the parachain's duty to ensure that the right amount of
 //! funds ultimately end up in module's fund sub-account.
 
-use frame_support::{
+use palette_support::{
 	decl_module, decl_storage, decl_event, storage::child, ensure, traits::{
 		Currency, Get, OnUnbalanced, WithdrawReason, ExistenceRequirement::AllowDeath
 	}
@@ -75,7 +75,7 @@ use system::ensure_signed;
 use sr_primitives::{ModuleId,
 	traits::{AccountIdConversion, Hash, Saturating, Zero, CheckedAdd}
 };
-use frame_support::weights::SimpleDispatchInfo;
+use palette_support::weights::SimpleDispatchInfo;
 use crate::slots;
 use codec::{Encode, Decode};
 use rstd::vec::Vec;
@@ -490,7 +490,7 @@ mod tests {
 	use super::*;
 
 	use std::{collections::HashMap, cell::RefCell};
-	use frame_support::{impl_outer_origin, assert_ok, assert_noop, parameter_types};
+	use palette_support::{impl_outer_origin, assert_ok, assert_noop, parameter_types};
 	use substrate_primitives::H256;
 	use primitives::parachain::{Info as ParaInfo, Id as ParaId};
 	// The testing primitives are very useful for avoiding having to work with signatures

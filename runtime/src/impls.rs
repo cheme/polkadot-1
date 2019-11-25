@@ -19,8 +19,8 @@
 use primitives::Balance;
 use sr_primitives::traits::{Convert, Saturating};
 use sr_primitives::{Fixed64, Perbill};
-use frame_support::weights::Weight;
-use frame_support::traits::{OnUnbalanced, Currency, Get};
+use palette_support::weights::Weight;
+use palette_support::traits::{OnUnbalanced, Currency, Get};
 use crate::{Balances, System, Authorship, MaximumBlockWeight, NegativeImbalance};
 
 /// Logic for the author to get a portion of fees.

@@ -26,7 +26,7 @@ mod parachains;
 mod slot_range;
 mod registrar;
 mod slots;
-mod crowdfund;
+// TODO EMCH update child trie code mod crowdfund;
 
 use rstd::prelude::*;
 use substrate_primitives::u32_trait::{_1, _2, _3, _4, _5};
@@ -48,7 +48,7 @@ use grandpa::{AuthorityId as GrandpaId, fg_primitives};
 use version::NativeVersion;
 use substrate_primitives::OpaqueMetadata;
 use sr_staking_primitives::SessionIndex;
-use frame_support::{
+use palette_support::{
 	parameter_types, construct_runtime, traits::{SplitTwoWays, Currency, Randomness},
 	weights::{Weight, DispatchInfo},
 };
