@@ -39,7 +39,7 @@ pallet-transaction-payment-rpc-runtime-api = { git = "https://github.com/cheme/s
 collective = { package = "pallet-collective", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 democracy = { package = "pallet-democracy", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 elections-phragmen = { package = "pallet-elections-phragmen", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
-executive = { package = "palette-executive", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
+executive = { package = "frame-executive", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 finality-tracker = { package = "pallet-finality-tracker", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 grandpa = { package = "pallet-grandpa", git = "https://github.com/cheme/substrate", default-features = false, features = ["migrate-authorities"], branch = "child_uuid_nt" }
 im-online = { package = "pallet-im-online", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
@@ -49,12 +49,12 @@ nicks = { package = "pallet-nicks", git = "https://github.com/cheme/substrate", 
 offences = { package = "pallet-offences", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 randomness-collective-flip = { package = "pallet-randomness-collective-flip", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 session = { package = "pallet-session", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
-palette-support = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
+frame-support = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 staking = { package = "pallet-staking", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 pallet-staking-reward-curve = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt" }
 sudo = { package = "pallet-sudo", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
-system = { package = "palette-system", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
-system_rpc_runtime_api = { package = "palette-system-rpc-runtime-api", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
+system = { package = "frame-system", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
+system_rpc_runtime_api = { package = "frame-system-rpc-runtime-api", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 timestamp = { package = "pallet-timestamp", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 treasury = { package = "pallet-treasury", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_nt" }
 
@@ -93,7 +93,7 @@ std = [
 	"offchain-primitives/std",
 	"rstd/std",
 	"sr-io/std",
-	"palette-support/std",
+	"frame-support/std",
 	"authorship/std",
 	"balances/std",
 	"transaction-payment/std",

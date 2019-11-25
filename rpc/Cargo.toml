@@ -11,7 +11,7 @@ polkadot-primitives = { path = "../primitives" }
 sr-primitives = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt"  }
 substrate-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt" }
 transaction_pool = { package = "substrate-transaction-pool", git = "https://github.com/cheme/substrate", branch = "child_uuid_nt"  }
-palette-system-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt"  }
+frame-system-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt"  }
 pallet-transaction-payment-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_nt" }
 polkadot-runtime = { path = "../runtime" }
 

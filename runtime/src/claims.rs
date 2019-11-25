@@ -18,9 +18,9 @@
 
 use rstd::prelude::*;
 use sr_io::{hashing::keccak_256, crypto::secp256k1_ecdsa_recover};
-use palette_support::{decl_event, decl_storage, decl_module};
-use palette_support::weights::SimpleDispatchInfo;
-use palette_support::traits::{Currency, Get};
+use frame_support::{decl_event, decl_storage, decl_module};
+use frame_support::weights::SimpleDispatchInfo;
+use frame_support::traits::{Currency, Get};
 use system::{ensure_root, ensure_none};
 use codec::{Encode, Decode};
 #[cfg(feature = "std")]
@@ -250,7 +250,7 @@ mod tests {
 	// or public keys. `u64` is used as the `AccountId` and no `Signature`s are required.
 	use sr_primitives::{Perbill, traits::{BlakeTwo256, IdentityLookup}, testing::Header};
 	use balances;
-	use palette_support::{impl_outer_origin, assert_ok, assert_err, assert_noop, parameter_types};
+	use frame_support::{impl_outer_origin, assert_ok, assert_err, assert_noop, parameter_types};
 
 	impl_outer_origin! {
 		pub enum Origin for Test {}
