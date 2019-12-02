@@ -465,9 +465,9 @@ impl<T: Trait> Module<T> {
 	}
 
 	/// Child trie unique id for a crowdfund is built from the hash part of the fund id.
-	pub fn trie_unique_id(fund_id: &[u8]) -> &[u8] {
+	pub fn trie_unique_id(fund_id: &[u8]) -> child::ChildInfo {
 		let start = CHILD_STORAGE_KEY_PREFIX.len() + b"default:".len();
-		&fund_id[start..]
+		child::ChildInfo::new_default(&fund_id[start..])
 	}
 
 	pub fn contribution_put(index: FundIndex, who: &T::AccountId, balance: &BalanceOf<T>) {
