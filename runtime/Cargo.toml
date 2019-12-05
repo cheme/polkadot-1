@@ -1,6 +1,6 @@
 [package]
 name = "polkadot-runtime"
-version = "0.7.1"
+version = "0.7.8"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 build = "build.rs"
@@ -14,21 +14,21 @@ safe-mix = { version = "1.0.0", default-features = false }
 serde = { version = "1.0.102", default-features = false }
 serde_derive = { version = "1.0.102", optional = true }
 
-authority-discovery-primitives = { package = "substrate-authority-discovery-primitives", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-babe-primitives = { package = "substrate-consensus-babe-primitives", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-sr-api = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1", default-features = false }
-inherents = { package = "substrate-inherents", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-offchain-primitives = { package = "substrate-offchain-primitives", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-rstd = { package = "sr-std", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-sr-io = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-sr-primitives = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-sr-staking-primitives = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-substrate-primitives = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-substrate-serializer = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-substrate-session = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-version = { package = "sr-version", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+authority-discovery-primitives = { package = "sp-authority-discovery", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+babe-primitives = { package = "sp-consensus-babe", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-api = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1", default-features = false }
+inherents = { package = "sp-inherents", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+offchain-primitives = { package = "sp-offchain", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+rstd = { package = "sp-std", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-io = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-runtime = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-staking = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-core = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-serializer = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+sp-session = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+version = { package = "sp-version", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 tx-pool-api = { package = "sp-transaction-pool-runtime-api", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
-block-builder-api = { package = "substrate-block-builder-runtime-api", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
+block-builder-api = { package = "sp-block-builder", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 
 authority-discovery = { package = "pallet-authority-discovery", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 authorship = { package = "pallet-authorship", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
@@ -52,7 +52,6 @@ session = { package = "pallet-session", git = "https://github.com/cheme/substrat
 frame-support = { git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 staking = { package = "pallet-staking", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 pallet-staking-reward-curve = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
-sudo = { package = "pallet-sudo", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 system = { package = "frame-system", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 system_rpc_runtime_api = { package = "frame-system-rpc-runtime-api", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
 timestamp = { package = "pallet-timestamp", git = "https://github.com/cheme/substrate", default-features = false, branch = "child_uuid_step1" }
@@ -65,8 +64,8 @@ polkadot-parachain = { path = "../parachain", default-features = false }
 hex-literal = "0.2.1"
 libsecp256k1 = "0.3.2"
 tiny-keccak = "1.5.0"
-keyring = { package = "substrate-keyring", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
-substrate-trie = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
+keyring = { package = "sp-keyring", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
+sp-trie = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
 trie-db = "0.16.0"
 serde_json = "1.0.41"
 
@@ -85,14 +84,14 @@ std = [
 	"rustc-hex/std",
 	"codec/std",
 	"inherents/std",
-	"substrate-primitives/std",
+	"sp-core/std",
 	"polkadot-parachain/std",
-	"sr-api/std",
+	"sp-api/std",
 	"tx-pool-api/std",
 	"block-builder-api/std",
 	"offchain-primitives/std",
 	"rstd/std",
-	"sr-io/std",
+	"sp-io/std",
 	"frame-support/std",
 	"authorship/std",
 	"balances/std",
@@ -109,11 +108,10 @@ std = [
 	"membership/std",
 	"nicks/std",
 	"offences/std",
-	"sr-primitives/std",
-	"sr-staking-primitives/std",
+	"sp-runtime/std",
+	"sp-staking/std",
 	"session/std",
 	"staking/std",
-	"sudo/std",
 	"system/std",
 	"system_rpc_runtime_api/std",
 	"timestamp/std",
@@ -125,6 +123,6 @@ std = [
 	"safe-mix/std",
 	"babe/std",
 	"babe-primitives/std",
-	"substrate-session/std",
+	"sp-session/std",
 	"randomness-collective-flip/std",
 ]

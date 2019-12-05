@@ -29,13 +29,13 @@ mod slots;
 mod crowdfund;
 
 use rstd::prelude::*;
-use substrate_primitives::u32_trait::{_1, _2, _3, _4, _5};
+use sp_core::u32_trait::{_1, _2, _3, _4, _5};
 use codec::{Encode, Decode};
 use primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Nonce, Signature, Moment,
-	parachain::{self, ActiveParas}, ValidityError,
+	parachain::{self, ActiveParas, CandidateReceipt}, ValidityError,
 };
-use sr_primitives::{
+use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
 	ApplyExtrinsicResult, Permill, Perbill, RuntimeDebug,
 	transaction_validity::{TransactionValidity, InvalidTransaction, TransactionValidityError},
@@ -46,8 +46,8 @@ use version::RuntimeVersion;
 use grandpa::{AuthorityId as GrandpaId, fg_primitives};
 #[cfg(any(feature = "std", test))]
 use version::NativeVersion;
-use substrate_primitives::OpaqueMetadata;
-use sr_staking_primitives::SessionIndex;
+use sp_core::OpaqueMetadata;
+use sp_staking::SessionIndex;
 use frame_support::{
 	parameter_types, construct_runtime, traits::{SplitTwoWays, Currency, Randomness},
 	weights::{Weight, DispatchInfo},
@@ -60,7 +60,7 @@ use pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo;
 #[cfg(feature = "std")]
 pub use staking::StakerStatus;
 #[cfg(any(feature = "std", test))]
-pub use sr_primitives::BuildStorage;
+pub use sp_runtime::BuildStorage;
 pub use timestamp::Call as TimestampCall;
 pub use balances::Call as BalancesCall;
 pub use attestations::{Call as AttestationsCall, MORE_ATTESTATIONS_IDENTIFIER};
@@ -97,7 +97,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	spec_name: create_runtime_str!("kusama"),
 	impl_name: create_runtime_str!("parity-kusama"),
 	authoring_version: 2,
-	spec_version: 1022,
+	spec_version: 1028,
 	impl_version: 0,
 	apis: RUNTIME_API_VERSIONS,
 };
@@ -130,7 +130,7 @@ impl SignedExtension for OnlyStakingAndClaims {
 		-> TransactionValidity
 	{
 		match call {
-			Call::Balances(_) | Call::Slots(_) | Call::Registrar(_)
+			Call::Slots(_) | Call::Registrar(_)
 				=> Err(InvalidTransaction::Custom(ValidityError::NoPermission.into()).into()),
 			_ => Ok(Default::default()),
 		}
@@ -297,12 +297,13 @@ pallet_staking_reward_curve::build! {
 
 parameter_types! {
 	// Six sessions in an era (24 hours).
+//	pub const SessionsPerEra: SessionIndex = 6;
 	pub const SessionsPerEra: SessionIndex = 6;
 	// 28 eras for unbonding (28 days).
-	// KUSAMA: This value is 1/4 of what we expect for the mainnet.
-	// KUSAMA-launch: 0 for managing the spooning injection.
-	pub const BondingDuration: staking::EraIndex = 0;
-	pub const SlashDeferDuration: staking::EraIndex = 7;
+	// KUSAMA: This value is 1/4 of what we expect for the mainnet, however session length is also
+	// a quarter, so the figure remains the same.
+	pub const BondingDuration: staking::EraIndex = 28;
+	pub const SlashDeferDuration: staking::EraIndex = 28;
 	pub const RewardCurve: &'static PiecewiseLinear<'static> = &REWARD_CURVE;
 }
 
@@ -317,9 +318,7 @@ impl staking::Trait for Runtime {
 	type BondingDuration = BondingDuration;
 	type SlashDeferDuration = SlashDeferDuration;
 	// A super-majority of the council can cancel the slash.
-	// KUSAMA-launch: Any council member can remove a slash.
-//	type SlashCancelOrigin = collective::EnsureProportionAtLeast<_3, _4, AccountId, CouncilCollective>;
-	type SlashCancelOrigin = collective::EnsureMember<AccountId, CouncilCollective>;
+	type SlashCancelOrigin = collective::EnsureProportionAtLeast<_3, _4, AccountId, CouncilCollective>;
 	type SessionInterface = Self;
 	type Time = Timestamp;
 	type RewardCurve = RewardCurve;
@@ -329,8 +328,7 @@ parameter_types! {
 	// KUSAMA: These values are 1/4 of what we expect for the mainnet.
 	pub const LaunchPeriod: BlockNumber = 7 * DAYS;
 	pub const VotingPeriod: BlockNumber = 7 * DAYS;
-	// KUSAMA: This is a bit short; should be increased to 3 hours.
-	pub const EmergencyVotingPeriod: BlockNumber = 1 * HOURS;
+	pub const EmergencyVotingPeriod: BlockNumber = 3 * HOURS;
 	pub const MinimumDeposit: Balance = 100 * DOLLARS;
 	pub const EnactmentPeriod: BlockNumber = 8 * DAYS;
 	pub const CooloffPeriod: BlockNumber = 7 * DAYS;
@@ -378,7 +376,8 @@ impl collective::Trait<CouncilCollective> for Runtime {
 parameter_types! {
 	pub const CandidacyBond: Balance = 100 * DOLLARS;
 	pub const VotingBond: Balance = 5 * DOLLARS;
-	pub const TermDuration: BlockNumber = 2 * HOURS;
+	/// Daily council elections.
+	pub const TermDuration: BlockNumber = 24 * HOURS;
 	pub const DesiredMembers: u32 = 13;
 	pub const DesiredRunnersUp: u32 = 7;
 }
@@ -420,8 +419,8 @@ parameter_types! {
 	pub const ProposalBondMinimum: Balance = 100 * DOLLARS;
 	// KUSAMA: This value is 1/4 of that expected for mainnet
 	pub const SpendPeriod: BlockNumber = 6 * DAYS;
-	// KUSAMA: This value is 1/5 of that expected for mainnet
-	pub const Burn: Permill = Permill::from_percent(1);
+	// KUSAMA: No burn - let's try to put it to use!
+	pub const Burn: Permill = Permill::from_percent(0);
 }
 
 impl treasury::Trait for Runtime {
@@ -536,11 +535,6 @@ impl claims::Trait for Runtime {
 	type Prefix = Prefix;
 }
 
-impl sudo::Trait for Runtime {
-	type Event = Event;
-	type Proposal = Call;
-}
-
 parameter_types! {
 	pub const ReservationFee: Balance = 1 * DOLLARS;
 	pub const MinLength: usize = 3;
@@ -603,10 +597,6 @@ construct_runtime! {
 		Slots: slots::{Module, Call, Storage, Event<T>},
 		Registrar: registrar::{Module, Call, Storage, Event, Config<T>},
 
-		// Sudo. Usable initially.
-		// RELEASE: remove this for release build.
-		Sudo: sudo,
-
 		// Simple nicknames module.
 		Nicks: nicks::{Module, Call, Storage, Event<T>},
 	}
@@ -641,8 +631,8 @@ pub type CheckedExtrinsic = generic::CheckedExtrinsic<AccountId, Nonce, Call>;
 /// Executive: handles dispatch to the various modules.
 pub type Executive = executive::Executive<Runtime, Block, system::ChainContext<Runtime>, Runtime, AllModules>;
 
-sr_api::impl_runtime_apis! {
-	impl sr_api::Core<Block> for Runtime {
+sp_api::impl_runtime_apis! {
+	impl sp_api::Core<Block> for Runtime {
 		fn version() -> RuntimeVersion {
 			VERSION
 		}
@@ -656,7 +646,7 @@ sr_api::impl_runtime_apis! {
 		}
 	}
 
-	impl sr_api::Metadata<Block> for Runtime {
+	impl sp_api::Metadata<Block> for Runtime {
 		fn metadata() -> OpaqueMetadata {
 			Runtime::metadata().into()
 		}
@@ -694,7 +684,7 @@ sr_api::impl_runtime_apis! {
 	}
 
 	impl offchain_primitives::OffchainWorkerApi<Block> for Runtime {
-		fn offchain_worker(number: sr_primitives::traits::NumberFor<Block>) {
+		fn offchain_worker(number: sp_runtime::traits::NumberFor<Block>) {
 			Executive::offchain_worker(number)
 		}
 	}
@@ -719,6 +709,19 @@ sr_api::impl_runtime_apis! {
 			-> Option<parachain::StructuredUnroutedIngress>
 		{
 			Parachains::ingress(to, since).map(parachain::StructuredUnroutedIngress)
+		}
+		fn get_heads(extrinsics: Vec<<Block as BlockT>::Extrinsic>) -> Option<Vec<CandidateReceipt>> {
+			extrinsics
+				.into_iter()
+				.find_map(|ex| match UncheckedExtrinsic::decode(&mut ex.encode().as_slice()) {
+					Ok(ex) => match ex.function {
+						Call::Parachains(ParachainsCall::set_heads(heads)) => {
+							Some(heads.into_iter().map(|c| c.candidate).collect())
+						}
+						_ => None,
+					}
+					Err(_) => None,
+				})
 		}
 	}
 
@@ -752,7 +755,7 @@ sr_api::impl_runtime_apis! {
 		}
 	}
 
-	impl substrate_session::SessionKeys<Block> for Runtime {
+	impl sp_session::SessionKeys<Block> for Runtime {
 		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
 			SessionKeys::generate(seed)
 		}

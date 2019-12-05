@@ -1,10 +1,10 @@
 [package]
 name = "polkadot-statement-table"
-version = "0.7.1"
+version = "0.7.8"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
 codec = { package = "parity-scale-codec", version = "1.1.0", default-features = false, features = ["derive"] }
-substrate-primitives = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
+sp-core = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
 primitives = { package = "polkadot-primitives", path = "../primitives" }

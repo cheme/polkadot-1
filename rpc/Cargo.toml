@@ -1,15 +1,15 @@
 [package]
 name = "polkadot-rpc"
-version = "0.7.1"
+version = "0.7.8"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
-client = { package = "substrate-client", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
+client = { package = "sc-client", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
 jsonrpc-core = "14.0.3"
 polkadot-primitives = { path = "../primitives" }
-sr-primitives = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1"  }
-substrate-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
+sp-runtime = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1"  }
+sc-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
 txpool-api = { package = "sp-transaction-pool-api", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }
 frame-rpc-system = { package = "substrate-frame-rpc-system", git = "https://github.com/cheme/substrate", branch = "child_uuid_step1"  }
 pallet-transaction-payment-rpc = { git = "https://github.com/cheme/substrate", branch = "child_uuid_step1" }

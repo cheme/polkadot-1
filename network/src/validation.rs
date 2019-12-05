@@ -19,20 +19,21 @@
 //! This fulfills the `polkadot_validation::Network` trait, providing a hook to be called
 //! each time validation leaf work begins on a new chain head.
 
-use sr_primitives::traits::ProvideRuntimeApi;
-use substrate_network::PeerId;
+use sp_runtime::traits::ProvideRuntimeApi;
+use sc_network::PeerId;
 use polkadot_validation::{
 	Network as ParachainNetwork, SharedTable, Collators, Statement, GenericStatement, SignedStatement,
 };
 use polkadot_primitives::{Block, BlockId, Hash};
 use polkadot_primitives::parachain::{
 	Id as ParaId, Collation, OutgoingMessages, ParachainHost, CandidateReceipt, CollatorId,
-	ValidatorId, PoVBlock
+	ValidatorId, PoVBlock,
 };
 
 use futures::prelude::*;
 use futures::future::{self, Executor as FutureExecutor};
 use futures::sync::oneshot::{self, Receiver};
+use futures03::{FutureExt as _, TryFutureExt as _};
 
 use std::collections::hash_map::{HashMap, Entry};
 use std::io;
@@ -123,7 +124,7 @@ impl<P, E: Clone, N, T: Clone> Clone for ValidationNetwork<P, E, N, T> {
 impl<P, E, N, T> ValidationNetwork<P, E, N, T> where
 	P: ProvideRuntimeApi + Send + Sync + 'static,
 	P::Api: ParachainHost<Block>,
-	E: Clone + Future<Item=(),Error=()> + Send + Sync + 'static,
+	E: Clone + futures03::Future<Output=()> + Send + Sync + 'static,
 	N: NetworkService,
 	T: Clone + Executor + Send + Sync + 'static,
 {
@@ -206,7 +207,7 @@ impl<P, E, N, T> ValidationNetwork<P, E, N, T> where N: NetworkService {
 impl<P, E, N, T> ParachainNetwork for ValidationNetwork<P, E, N, T> where
 	P: ProvideRuntimeApi + Send + Sync + 'static,
 	P::Api: ParachainHost<Block, Error = sp_blockchain::Error>,
-	E: Clone + Future<Item=(),Error=()> + Send + Sync + 'static,
+	E: Clone + futures03::Future<Output=()> + Send + Sync + Unpin + 'static,
 	N: NetworkService,
 	T: Clone + Executor + Send + Sync + 'static,
 {
@@ -242,8 +243,12 @@ impl<P, E, N, T> ParachainNetwork for ValidationNetwork<P, E, N, T> where
 
 				let table_router_clone = table_router.clone();
 				let work = table_router.checked_statements()
-					.for_each(move |msg| { table_router_clone.import_statement(msg); Ok(()) });
-				executor.spawn(work.select(exit).map(|_| ()).map_err(|_| ()));
+					.for_each(move |msg| { table_router_clone.import_statement(msg); Ok(()) })
+					.select(exit.clone().unit_error().compat())
+					.map(|_| ())
+					.map_err(|_| ());
+
+				executor.spawn(work);
 
 				table_router
 			});
@@ -670,7 +675,7 @@ impl<P: ProvideRuntimeApi + Send, E, N, T> LeafWorkDataFetcher<P, E, N, T> where
 	P::Api: ParachainHost<Block>,
 	N: NetworkService,
 	T: Clone + Executor + Send + 'static,
-	E: Future<Item=(),Error=()> + Clone + Send + 'static,
+	E: futures03::Future<Output=()> + Clone + Send + 'static,
 {
 	/// Fetch PoV block for the given candidate receipt.
 	pub fn fetch_pov_block(&self, candidate: &CandidateReceipt) -> PoVReceiver {
@@ -706,7 +711,7 @@ impl<P: ProvideRuntimeApi + Send, E, N, T> LeafWorkDataFetcher<P, E, N, T> where
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use substrate_primitives::crypto::UncheckedInto;
+	use sp_core::crypto::UncheckedInto;
 
 	#[test]
 	fn last_keys_works() {
