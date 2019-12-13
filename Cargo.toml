@@ -44,6 +44,10 @@ exclude = [
 [badges]
 maintenance = { status = "actively-developed" }
 
+[patch.crates-io]
+trie-db = { git = "https://github.com/cheme/trie", branch = "updatable_traverse" }
+hash-db = { git = "https://github.com/cheme/trie", branch = "updatable_traverse" }
+
 [profile.release]
 # Polkadot runtime requires unwinding.
 panic = "unwind"

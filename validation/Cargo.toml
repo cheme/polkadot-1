@@ -20,22 +20,22 @@ polkadot-primitives = { path = "../primitives" }
 polkadot-erasure-coding = { path = "../erasure-coding" }
 polkadot-runtime = { path = "../runtime" }
 table = { package = "polkadot-statement-table", path = "../statement-table" }
-grandpa = { package = "sc-finality-grandpa", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-inherents = { package = "sp-inherents", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-consensus = { package = "sp-consensus", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-primitives = { package = "sp-core", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-txpool-api = { package = "sp-transaction-pool", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-client = { package = "sc-client-api", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-sp-blockchain = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-sp-api = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-sp-timestamp = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-block-builder = { package = "sc-block-builder", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-trie = { package = "sp-trie", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-runtime_primitives = { package = "sp-runtime", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
+grandpa = { package = "sc-finality-grandpa", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+inherents = { package = "sp-inherents", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+consensus = { package = "sp-consensus", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+primitives = { package = "sp-core", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+txpool-api = { package = "sp-transaction-pool", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+client = { package = "sc-client-api", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+sp-blockchain = { git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+sp-api = { git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+sp-timestamp = { git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+block-builder = { package = "sc-block-builder", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+trie = { package = "sp-trie", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+runtime_primitives = { package = "sp-runtime", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
 bitvec = { version = "0.15.2", default-features = false, features = ["alloc"] }
-runtime_babe = { package = "pallet-babe", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-babe-primitives = { package = "sp-consensus-babe", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
-keystore = { package = "sc-keystore", git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
+runtime_babe = { package = "pallet-babe", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+babe-primitives = { package = "sp-consensus-babe", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
+keystore = { package = "sc-keystore", git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
 
 [dev-dependencies]
-sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-master" }
+sp-keyring = { git = "https://github.com/cheme/substrate", branch = "updatable_traverse" }
