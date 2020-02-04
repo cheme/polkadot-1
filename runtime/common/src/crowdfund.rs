@@ -524,26 +524,26 @@ impl<T: Trait> Module<T> {
 
 	pub fn contribution_put(index: FundIndex, who: &T::AccountId, balance: &BalanceOf<T>) {
 		let id = Self::id_from_index(index);
-		who.using_encoded(|b| child::put(id.as_ref(), Self::trie_unique_id(id.as_ref()), b, balance));
+		who.using_encoded(|b| child::put(id.as_ref(), &Self::trie_unique_id(id.as_ref()), b, balance));
 	}
 
 	pub fn contribution_get(index: FundIndex, who: &T::AccountId) -> BalanceOf<T> {
 		let id = Self::id_from_index(index);
 		who.using_encoded(|b| child::get_or_default::<BalanceOf<T>>(
 			id.as_ref(),
-			Self::trie_unique_id(id.as_ref()),
+			&Self::trie_unique_id(id.as_ref()),
 			b,
 		))
 	}
 
 	pub fn contribution_kill(index: FundIndex, who: &T::AccountId) {
 		let id = Self::id_from_index(index);
-		who.using_encoded(|b| child::kill(id.as_ref(), Self::trie_unique_id(id.as_ref()), b));
+		who.using_encoded(|b| child::kill(id.as_ref(), &Self::trie_unique_id(id.as_ref()), b));
 	}
 
 	pub fn crowdfund_kill(index: FundIndex) {
 		let id = Self::id_from_index(index);
-		child::kill_storage(id.as_ref(), Self::trie_unique_id(id.as_ref()));
+		child::kill_storage(id.as_ref(), &Self::trie_unique_id(id.as_ref()));
 	}
 }
 
