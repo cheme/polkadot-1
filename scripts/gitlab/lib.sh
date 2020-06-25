@@ -5,7 +5,7 @@ api_base="https://api.github.com/repos"
 # Function to take 2 git tags/commits and get any lines from commit messages
 # that contain something that looks like a PR reference: e.g., (#1234)
 sanitised_git_logs(){
-  git --no-pager log --pretty=format:"%s" "$1..$2" |
+  git --no-pager log --pretty=format:"%s" "$1...$2" |
   # Only find messages referencing a PR
   grep -E '\(#[0-9]+\)' |
   # Strip any asterisks
@@ -21,12 +21,19 @@ sanitised_git_logs(){
 check_tag () {
   repo=$1
   tagver=$2
-  tag_out=$(curl -H "Authorization: token $GITHUB_RELEASE_TOKEN" -s "$api_base/$repo/git/refs/tags/$tagver")
+  if [ -n "$GITHUB_RELEASE_TOKEN" ]; then
+    echo '[+] Fetching tag using privileged token'
+    tag_out=$(curl -H "Authorization: token $GITHUB_RELEASE_TOKEN" -s "$api_base/$repo/git/refs/tags/$tagver")
+  else
+    echo '[+] Fetching tag using unprivileged token'
+    tag_out=$(curl -H "Authorization: token $GITHUB_PR_TOKEN" -s "$api_base/$repo/git/refs/tags/$tagver")
+  fi
   tag_sha=$(echo "$tag_out" | jq -r .object.sha)
   object_url=$(echo "$tag_out" | jq -r .object.url)
   if [ "$tag_sha" = "null" ]; then
     return 2
   fi
+  echo "[+] Tag object SHA: $tag_sha"
   verified_str=$(curl -H "Authorization: token $GITHUB_RELEASE_TOKEN" -s "$object_url" | jq -r .verification.verified)
   if [ "$verified_str" = "true" ]; then
     # Verified, everything is good
@@ -46,7 +53,11 @@ has_label(){
   repo="$1"
   pr_id="$2"
   label="$3"
-  out=$(curl -H "Authorization: token $GITHUB_RELEASE_TOKEN" -s "$api_base/$repo/pulls/$pr_id")
+  if [ -n "$GITHUB_RELEASE_TOKEN" ]; then
+    out=$(curl -H "Authorization: token $GITHUB_RELEASE_TOKEN" -s "$api_base/$repo/pulls/$pr_id")
+  else
+    out=$(curl -H "Authorization: token $GITHUB_PR_TOKEN" -s "$api_base/$repo/pulls/$pr_id")
+  fi
   [ -n "$(echo "$out" | tr -d '\r\n' | jq ".labels | .[] | select(.name==\"$label\")")" ]
 }
 

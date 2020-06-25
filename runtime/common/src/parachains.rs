@@ -19,12 +19,12 @@
 use sp_std::prelude::*;
 use sp_std::result;
 use codec::{Decode, Encode};
-
 use sp_runtime::{
 	KeyTypeId, Perbill, RuntimeDebug,
 	traits::{
-		Hash as HashT, BlakeTwo256, Saturating, One, Dispatchable,
+		Hash as HashT, BlakeTwo256, Saturating, One, Zero, Dispatchable,
 		AccountIdConversion, BadOrigin, Convert, SignedExtension, AppVerify,
+		DispatchInfoOf,
 	},
 	transaction_validity::{TransactionValidityError, ValidTransaction, TransactionValidity},
 };
@@ -35,27 +35,33 @@ use sp_staking::{
 use frame_support::{
 	traits::KeyOwnerProofSystem,
 	dispatch::{IsSubType},
-	weights::{DispatchInfo, SimpleDispatchInfo, Weight, WeighData},
+	weights::{DispatchClass, Weight},
 };
 use primitives::{
 	Balance,
+	BlockNumber,
 	parachain::{
-		self, Id as ParaId, Chain, DutyRoster, AttestedCandidate, Statement, ParachainDispatchOrigin,
+		Id as ParaId, Chain, DutyRoster, AttestedCandidate, Statement, ParachainDispatchOrigin,
 		UpwardMessage, ValidatorId, ActiveParas, CollatorId, Retriable, OmittedValidationData,
 		CandidateReceipt, GlobalValidationSchedule, AbridgedCandidateReceipt,
-		LocalValidationData, ValidityAttestation, NEW_HEADS_IDENTIFIER, PARACHAIN_KEY_TYPE_ID,
-		ValidatorSignature, SigningContext,
+		LocalValidationData, Scheduling, ValidityAttestation, NEW_HEADS_IDENTIFIER, PARACHAIN_KEY_TYPE_ID,
+		ValidatorSignature, SigningContext, HeadData, ValidationCode,
 	},
 };
 use frame_support::{
 	Parameter, dispatch::DispatchResult, decl_storage, decl_module, decl_error, ensure,
 	traits::{Currency, Get, WithdrawReason, ExistenceRequirement, Randomness},
 };
-use sp_runtime::transaction_validity::InvalidTransaction;
+use sp_runtime::{
+	transaction_validity::InvalidTransaction,
+};
 
 use inherents::{ProvideInherent, InherentData, MakeFatalError, InherentIdentifier};
 
-use system::{ensure_none, ensure_signed};
+use system::{
+	ensure_none, ensure_signed,
+	offchain::{CreateSignedTransaction, SendSignedTransaction, Signer},
+};
 use crate::attestations::{self, IncludedBlocks};
 use crate::registrar::Registrar;
 
@@ -140,7 +146,7 @@ impl<Proof: Parameter + GetSessionNumber> DoubleVoteReport<Proof> {
 	) -> Result<(), DoubleVoteValidityError> {
 		let first = self.first.clone();
 		let second = self.second.clone();
-		let id = self.identity.encode();
+		let id = self.identity.clone();
 
 		T::KeyOwnerProofSystem::check_proof((PARACHAIN_KEY_TYPE_ID, id), self.proof.clone())
 			.ok_or(DoubleVoteValidityError::InvalidProof)?;
@@ -204,26 +210,34 @@ impl<T: session::Trait> Get<Vec<T::ValidatorId>> for ValidatorIdentities<T> {
 	}
 }
 
-/// A trait to get a session number the `Proof` belongs to.
+/// A trait to get a session number the `MembershipProof` belongs to.
 pub trait GetSessionNumber {
 	fn session(&self) -> SessionIndex;
 }
 
-impl GetSessionNumber for session::historical::Proof {
+impl GetSessionNumber for sp_session::MembershipProof {
 	fn session(&self) -> SessionIndex {
-		self.session()
+		self.session
 	}
 }
 
-pub trait Trait: attestations::Trait + session::historical::Trait {
+pub trait Trait: CreateSignedTransaction<Call<Self>> + attestations::Trait + session::historical::Trait {
+	// The transaction signing authority
+	type AuthorityId: system::offchain::AppCrypto<Self::Public, Self::Signature>;
+
 	/// The outer origin type.
 	type Origin: From<Origin> + From<system::RawOrigin<Self::AccountId>>;
 
 	/// The outer call dispatch type.
-	type Call: Parameter + Dispatchable<Origin=<Self as Trait>::Origin>;
+	type Call: Parameter + Dispatchable<Origin=<Self as Trait>::Origin> + From<Call<Self>>;
 
 	/// Some way of interacting with balances for fees.
 	type ParachainCurrency: ParachainCurrency<Self::AccountId>;
+
+	/// Polkadot in practice will always use the `BlockNumber` type.
+	/// Substrate isn't good at giving us ways to bound the supertrait
+	/// associated type, so we introduce this conversion.
+	type BlockNumberConversion: Convert<Self::BlockNumber, BlockNumber>;
 
 	/// Something that provides randomness in the runtime.
 	type Randomness: Randomness<Self::Hash>;
@@ -241,6 +255,21 @@ pub trait Trait: attestations::Trait + session::historical::Trait {
 
 	/// Max head data size.
 	type MaxHeadDataSize: Get<u32>;
+	/// The frequency at which paras can upgrade their validation function.
+	/// This is an integer number of relay-chain blocks that must pass between
+	/// code upgrades.
+	type ValidationUpgradeFrequency: Get<Self::BlockNumber>;
+
+	/// The delay before a validation function upgrade is applied.
+	type ValidationUpgradeDelay: Get<Self::BlockNumber>;
+
+	/// The period (in blocks) that slash reports are permitted against an
+	/// included candidate.
+	///
+	/// After validation function upgrades, the old code is persisted on-chain
+	/// for this period, to ensure that candidates validated under old functions
+	/// can be re-checked.
+	type SlashPeriod: Get<Self::BlockNumber>;
 
 	/// Proof type.
 	///
@@ -251,7 +280,7 @@ pub trait Trait: attestations::Trait + session::historical::Trait {
 
 	/// Compute and check proofs of historical key owners.
 	type KeyOwnerProofSystem: KeyOwnerProofSystem<
-		(KeyTypeId, Vec<u8>),
+		(KeyTypeId, ValidatorId),
 		Proof = Self::Proof,
 		IdentificationTuple = Self::IdentificationTuple,
 	>;
@@ -263,7 +292,7 @@ pub trait Trait: attestations::Trait + session::historical::Trait {
 	type ReportOffence: ReportOffence<
 		Self::AccountId,
 		Self::IdentificationTuple,
-		DoubleVoteOffence<Self::IdentificationTuple>
+		DoubleVoteOffence<Self::IdentificationTuple>,
 	>;
 
 	/// A type that converts the opaque hash type to exact one.
@@ -323,21 +352,129 @@ const MAX_QUEUE_COUNT: usize = 100;
 /// single message.
 const WATERMARK_QUEUE_SIZE: usize = 20000;
 
+/// Metadata used to track previous parachain validation code that we keep in
+/// the state.
+#[derive(Default, Encode, Decode)]
+#[cfg_attr(test, derive(Debug, Clone, PartialEq))]
+pub struct ParaPastCodeMeta<N> {
+	// Block numbers where the code was replaced. These can be used as indices
+	// into the `PastCode` map along with the `ParaId` to fetch the code itself.
+	upgrade_times: Vec<N>,
+	// This tracks the highest pruned code-replacement, if any.
+	last_pruned: Option<N>,
+}
+
+#[cfg_attr(test, derive(Debug, PartialEq))]
+enum UseCodeAt<N> {
+	// Use the current code.
+	Current,
+	// Use the code that was replaced at the given block number.
+	ReplacedAt(N),
+}
+
+impl<N: Ord + Copy> ParaPastCodeMeta<N> {
+	// note a replacement has occurred at a given block number.
+	fn note_replacement(&mut self, at: N) {
+		self.upgrade_times.insert(0, at)
+	}
+
+	// Yields the block number of the code that should be used for validating at
+	// the given block number.
+	//
+	// a return value of `None` means that there is no code we are aware of that
+	// should be used to validate at the given height.
+	fn code_at(&self, at: N) -> Option<UseCodeAt<N>> {
+		// The `PastCode` map stores the code which was replaced at `t`.
+		let end_position = self.upgrade_times.iter().position(|&t| t < at);
+		if let Some(end_position) = end_position {
+			Some(if end_position != 0 {
+				// `end_position` gives us the replacement time where the code used at `at`
+				// was set. But that code has been replaced: `end_position - 1` yields
+				// that index.
+				UseCodeAt::ReplacedAt(self.upgrade_times[end_position - 1])
+			} else {
+				// the most recent tracked replacement is before `at`.
+				// this means that the code put in place then (i.e. the current code)
+				// is correct for validating at `at`.
+				UseCodeAt::Current
+			})
+		} else {
+			if self.last_pruned.as_ref().map_or(true, |&n| n < at) {
+				// Our `last_pruned` is before `at`, so we still have the code!
+				// but no code upgrade entries found before the `at` parameter.
+				//
+				// this means one of two things is true:
+				// 1. there are no non-pruned upgrade logs. in this case use `Current`
+				// 2. there are non-pruned upgrade logs all after `at`.
+				//    in this case use the oldest upgrade log.
+				Some(self.upgrade_times.last()
+					.map(|n| UseCodeAt::ReplacedAt(*n))
+					.unwrap_or(UseCodeAt::Current)
+				)
+			} else {
+				// We don't have the code anymore.
+				None
+			}
+		}
+	}
+
+	// The block at which the most recently tracked code change occurred.
+	fn most_recent_change(&self) -> Option<N> {
+		self.upgrade_times.first().map(|x| x.clone())
+	}
+
+	// prunes all code upgrade logs occurring at or before `max`.
+	// note that code replaced at `x` is the code used to validate all blocks before
+	// `x`. Thus, `max` should be outside of the slashing window when this is invoked.
+	//
+	// returns an iterator of block numbers at which code was replaced, where the replaced
+	// code should be now pruned, in ascending order.
+	fn prune_up_to(&'_ mut self, max: N) -> impl Iterator<Item=N> + '_ {
+		match self.upgrade_times.iter().position(|&t| t <= max) {
+			None => {
+				// this is a no-op `drain` - desired because all
+				// logged code upgrades occurred after `max`.
+				self.upgrade_times.drain(self.upgrade_times.len()..).rev()
+			}
+			Some(pos) => {
+				self.last_pruned = Some(self.upgrade_times[pos]);
+				self.upgrade_times.drain(pos..).rev()
+			}
+		}
+	}
+}
+
 decl_storage! {
 	trait Store for Module<T: Trait> as Parachains
 	{
 		/// All authorities' keys at the moment.
 		pub Authorities get(fn authorities): Vec<ValidatorId>;
-		/// The parachains registered at present.
-		pub Code get(fn parachain_code): map hasher(twox_64_concat) ParaId => Option<Vec<u8>>;
+		/// The active code of a currently-registered parachain.
+		pub Code get(fn parachain_code): map hasher(twox_64_concat) ParaId => Option<ValidationCode>;
+		/// Past code of parachains. The parachains themselves may not be registered anymore,
+		/// but we also keep their code on-chain for the same amount of time as outdated code
+		/// to assist with availability.
+		PastCodeMeta get(fn past_code_meta): map hasher(twox_64_concat) ParaId => ParaPastCodeMeta<T::BlockNumber>;
+		/// Actual past code, indicated by the parachain and the block number at which it
+		/// became outdated.
+		PastCode: map hasher(twox_64_concat) (ParaId, T::BlockNumber) => Option<ValidationCode>;
+		/// Past code pruning, in order of priority.
+		PastCodePruning get(fn past_code_pruning_tasks): Vec<(ParaId, T::BlockNumber)>;
+		// The block number at which the planned code change is expected for a para.
+		// The change will be applied after the first parablock for this ID included which executes
+		// in the context of a relay chain block with a number >= `expected_at`.
+		FutureCodeUpgrades get(fn code_upgrade_schedule): map hasher(twox_64_concat) ParaId => Option<T::BlockNumber>;
+		// The actual future code of a para.
+		FutureCode: map hasher(twox_64_concat) ParaId => ValidationCode;
+
 		/// The heads of the parachains registered at present.
-		pub Heads get(fn parachain_head): map hasher(twox_64_concat) ParaId => Option<Vec<u8>>;
+		pub Heads get(fn parachain_head): map hasher(twox_64_concat) ParaId => Option<HeadData>;
 		/// Messages ready to be dispatched onto the relay chain. It is subject to
 		/// `MAX_MESSAGE_COUNT` and `WATERMARK_MESSAGE_SIZE`.
 		pub RelayDispatchQueue: map hasher(twox_64_concat) ParaId => Vec<UpwardMessage>;
 		/// Size of the dispatch queues. Separated from actual data in order to avoid costly
 		/// decoding when checking receipt validity. First item in tuple is the count of messages
-		///	second if the total length (in bytes) of the message payloads.
+		/// second if the total length (in bytes) of the message payloads.
 		pub RelayDispatchQueueSize: map hasher(twox_64_concat) ParaId => (u32, u32);
 		/// The ordered list of ParaIds that have a `RelayDispatchQueue` entry.
 		NeedsDispatch: Vec<ParaId>;
@@ -386,6 +523,10 @@ decl_error! {
 		ParentMismatch,
 		/// Head data was too large.
 		HeadDataTooLarge,
+		/// New validation code was too large.
+		ValidationCodeTooLarge,
+		/// Disallowed code upgrade.
+		DisallowedCodeUpgrade,
 		/// Para does not have enough balance to pay fees.
 		CannotPayFees,
 		/// Unexpected relay-parent for a candidate receipt.
@@ -398,8 +539,21 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: <T as system::Trait>::Origin {
 		type Error = Error<T>;
 
+		fn on_initialize(now: T::BlockNumber) -> Weight {
+			<Self as Store>::DidUpdate::kill();
+
+			Self::do_old_code_pruning(now);
+
+			// TODO https://github.com/paritytech/polkadot/issues/977: set correctly
+			0
+		}
+
+		fn on_finalize() {
+			assert!(<Self as Store>::DidUpdate::exists(), "Parachain heads must be updated once in the block");
+		}
+
 		/// Provide candidate receipts for parachains, in ascending order by id.
-		#[weight = SimpleDispatchInfo::FixedNormal(1_000_000)]
+		#[weight = (1_000_000_000, DispatchClass::Mandatory)]
 		pub fn set_heads(origin, heads: Vec<AttestedCandidate>) -> DispatchResult {
 			ensure_none(origin)?;
 			ensure!(!<DidUpdate>::exists(), Error::<T>::TooManyHeadUpdates);
@@ -411,10 +565,7 @@ decl_module! {
 
 			let mut proceeded = Vec::with_capacity(heads.len());
 
-			let schedule = GlobalValidationSchedule {
-				max_code_size: T::MaxCodeSize::get(),
-				max_head_data_size: T::MaxHeadDataSize::get(),
-			};
+			let schedule = Self::global_validation_schedule();
 
 			if !active_parachains.is_empty() {
 				// perform integrity checks before writing to storage.
@@ -482,11 +633,11 @@ decl_module! {
 		///
 		/// The weight is 0; in order to avoid DoS a `SignedExtension` validation
 		/// is implemented.
-		#[weight = SimpleDispatchInfo::FixedNormal(0)]
+		#[weight = 0]
 		pub fn report_double_vote(
 			origin,
 			report: DoubleVoteReport<
-				<T::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, Vec<u8>)>>::Proof,
+				<T::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::Proof,
 			>,
 		) -> DispatchResult {
 			let reporter = ensure_signed(origin)?;
@@ -500,7 +651,7 @@ decl_module! {
 			// We have already checked this proof in `SignedExtension`, but we need
 			// this here to get the full identification of the offender.
 			let offender = T::KeyOwnerProofSystem::check_proof(
-					(PARACHAIN_KEY_TYPE_ID, identity.encode()),
+					(PARACHAIN_KEY_TYPE_ID, identity),
 					proof,
 				).ok_or("Invalid/outdated key ownership proof.")?;
 
@@ -516,16 +667,6 @@ decl_module! {
 				.map_err(|_| "Failed to report offence")?;
 
 			Ok(())
-		}
-
-		fn on_initialize() -> Weight {
-			<Self as Store>::DidUpdate::kill();
-
-			SimpleDispatchInfo::default().weigh_data(())
-		}
-
-		fn on_finalize() {
-			assert!(<Self as Store>::DidUpdate::exists(), "Parachain heads must be updated once in the block");
 		}
 	}
 }
@@ -547,18 +688,96 @@ impl<T: Trait> Module<T> {
 	/// Initialize the state of a new parachain/parathread.
 	pub fn initialize_para(
 		id: ParaId,
-		code: Vec<u8>,
-		initial_head_data: Vec<u8>,
+		code: ValidationCode,
+		initial_head_data: HeadData,
 	) {
 		<Code>::insert(id, code);
 		<Heads>::insert(id, initial_head_data);
 	}
 
+	/// Cleanup all storage related to a para. Some pieces of data may remain
+	/// available in the on-chain state.
 	pub fn cleanup_para(
 		id: ParaId,
 	) {
-		<Code>::remove(id);
+		let code = <Code>::take(id);
 		<Heads>::remove(id);
+
+		// clean up from all code-upgrade maps.
+		// we don't clean up the meta or planned-code maps as that's handled
+		// by the pruning process.
+		if let Some(_planned_future_at) = <Self as Store>::FutureCodeUpgrades::take(&id) {
+			<Self as Store>::FutureCode::remove(&id);
+		}
+
+		if let Some(code) = code {
+			Self::note_past_code(id, <system::Module<T>>::block_number(), code);
+		}
+	}
+
+	// note replacement of the code of para with given `id`, which occured in the
+	// context of the given relay-chain block number. provide the replaced code.
+	//
+	// `at` for para-triggered replacement is the block number of the relay-chain
+	// block in whose context the parablock was executed
+	// (i.e. number of `relay_parent` in the receipt)
+	fn note_past_code(id: ParaId, at: T::BlockNumber, old_code: ValidationCode) {
+		<Self as Store>::PastCodeMeta::mutate(&id, |past_meta| {
+			past_meta.note_replacement(at);
+		});
+
+		<Self as Store>::PastCode::insert(&(id, at), old_code);
+
+		// Schedule pruning for this past-code to be removed as soon as it
+		// exits the slashing window.
+		<Self as Store>::PastCodePruning::mutate(|pruning| {
+			let insert_idx = pruning.binary_search_by_key(&at, |&(_, b)| b)
+				.unwrap_or_else(|idx| idx);
+			pruning.insert(insert_idx, (id, at));
+		})
+	}
+
+	// does old code pruning.
+	fn do_old_code_pruning(now: T::BlockNumber) {
+		let slash_period = T::SlashPeriod::get();
+		if now <= slash_period { return }
+
+		// The height of any changes we no longer should keep around.
+		let pruning_height = now - (slash_period + One::one());
+
+		<Self as Store>::PastCodePruning::mutate(|pruning_tasks: &mut Vec<(_, T::BlockNumber)>| {
+			let pruning_tasks_to_do = {
+				// find all past code that has just exited the pruning window.
+				let up_to_idx = pruning_tasks.iter()
+					.take_while(|&(_, at)| at <= &pruning_height)
+					.count();
+				pruning_tasks.drain(..up_to_idx)
+			};
+
+			for (para_id, _) in pruning_tasks_to_do {
+				let full_deactivate = <Self as Store>::PastCodeMeta::mutate(&para_id, |meta| {
+					for pruned_repl_at in meta.prune_up_to(pruning_height) {
+						<Self as Store>::PastCode::remove(&(para_id, pruned_repl_at));
+					}
+
+					meta.most_recent_change().is_none() && Self::parachain_head(&para_id).is_none()
+				});
+
+				// This parachain has been removed and now the vestigial code
+				// has been removed from the state. clean up meta as well.
+				if full_deactivate {
+					<Self as Store>::PastCodeMeta::remove(&para_id);
+				}
+			}
+		});
+	}
+
+	// Performs a code upgrade of a parachain.
+	fn do_code_upgrade(id: ParaId, at: T::BlockNumber, new_code: &ValidationCode) {
+		let old_code = Self::parachain_code(&id).unwrap_or_default();
+		Code::insert(&id, new_code);
+
+		Self::note_past_code(id, at, old_code);
 	}
 
 	/// Get a `SigningContext` with a current `SessionIndex` and parent hash.
@@ -570,6 +789,20 @@ impl<T: Trait> Module<T> {
 			session_index,
 			parent_hash: T::BlockHashConversion::convert(parent_hash),
 		}
+	}
+
+	/// Submit a double vote report.
+	pub fn submit_double_vote_report(
+		report: DoubleVoteReport<T::Proof>,
+	) -> Option<()> {
+		Signer::<T, T::AuthorityId>::all_accounts()
+			.send_signed_transaction(
+				move |_account| {
+					Call::report_double_vote(report.clone())
+				}
+			)
+			.iter()
+			.find_map(|(_, res)| res.ok().map(|_| ()))
 	}
 
 	/// Dispatch some messages from a parachain.
@@ -640,6 +873,7 @@ impl<T: Trait> Module<T> {
 
 		for head in heads.iter() {
 			let id = head.parachain_index();
+			Heads::insert(id, &head.candidate.head_data);
 
 			// Queue up upwards messages (from parachains to relay chain).
 			Self::queue_upward_messages(
@@ -668,9 +902,9 @@ impl<T: Trait> Module<T> {
 				*len += upward_messages.iter()
 					.fold(0, |a, x| a + x.data.len()) as u32;
 			});
-			// Should never be able to fail assuming our state is uncorrupted, but best not
-			// to panic, even if it does.
-			let _ = RelayDispatchQueue::append(id, upward_messages);
+
+			upward_messages.iter().for_each(|m| RelayDispatchQueue::append(id, m));
+
 			if let Err(i) = ordered_needs_dispatch.binary_search(&id) {
 				// same.
 				ordered_needs_dispatch.insert(i, id);
@@ -790,17 +1024,81 @@ impl<T: Trait> Module<T> {
 
 	/// Get the global validation schedule for all parachains.
 	pub fn global_validation_schedule() -> GlobalValidationSchedule {
+		let now = <system::Module<T>>::block_number();
 		GlobalValidationSchedule {
 			max_code_size: T::MaxCodeSize::get(),
 			max_head_data_size: T::MaxHeadDataSize::get(),
+			block_number: T::BlockNumberConversion::convert(if now.is_zero() {
+				now
+			} else {
+				// parablocks included in this block will execute in the context
+				// of the current block's parent.
+				now - One::one()
+			}),
 		}
 	}
 
 	/// Get the local validation schedule for a particular parachain.
-	pub fn local_validation_data(id: &parachain::Id) -> Option<LocalValidationData> {
+	pub fn local_validation_data(id: &ParaId, perceived_height: T::BlockNumber) -> Option<LocalValidationData> {
+		if perceived_height + One::one() != <system::Module<T>>::block_number() {
+			// sanity-check - no non-direct-parent blocks allowed at the moment.
+			return None
+		}
+
+		let code_upgrade_allowed: Option<BlockNumber> = (|| {
+			match T::Registrar::para_info(*id)?.scheduling {
+				Scheduling::Always => {},
+				Scheduling::Dynamic => return None, // parathreads can't upgrade code.
+			}
+
+			// if perceived-height were not the parent of `now`, then this should
+			// not be drawn from current-runtime configuration. however the sanity-check
+			// above prevents that.
+			let min_upgrade_frequency = T::ValidationUpgradeFrequency::get();
+			let upgrade_delay = T::ValidationUpgradeDelay::get();
+
+			let no_planned = Self::code_upgrade_schedule(id)
+				.map_or(true, |expected: T::BlockNumber| expected <= perceived_height);
+
+			let can_upgrade_code = no_planned &&
+				Self::past_code_meta(id).most_recent_change()
+					.map_or(true, |at| at + min_upgrade_frequency < perceived_height);
+
+			if can_upgrade_code {
+				let applied_at = perceived_height + upgrade_delay;
+				Some(T::BlockNumberConversion::convert(applied_at))
+			} else {
+				None
+			}
+		})();
+
 		Self::parachain_head(id).map(|parent_head| LocalValidationData {
-			parent_head: primitives::parachain::HeadData(parent_head),
+			parent_head,
 			balance: T::ParachainCurrency::free_balance(*id),
+			code_upgrade_allowed,
+		})
+	}
+
+	/// Get the local validation data for a particular parent w.r.t. the current
+	/// block height.
+	pub fn current_local_validation_data(id: &ParaId) -> Option<LocalValidationData> {
+		let now: T::BlockNumber = <system::Module<T>>::block_number();
+		if now >= One::one() {
+			Self::local_validation_data(id, now - One::one())
+		} else {
+			None
+		}
+	}
+
+	/// Fetch the code used for verifying a parachain at a particular height.
+	pub fn parachain_code_at(id: &ParaId, at: T::BlockNumber) -> Option<ValidationCode> {
+		// note - we don't check that the parachain is currently registered
+		// as this might be a deregistered parachain whose old code should still
+		// stick around on-chain for some time.
+		Self::past_code_meta(id).code_at(at).and_then(|to_use| match to_use {
+			UseCodeAt::Current => Self::parachain_code(id),
+			UseCodeAt::ReplacedAt(replaced_at) =>
+				<Self as Store>::PastCode::get(&(*id, replaced_at)),
 		})
 	}
 
@@ -883,23 +1181,22 @@ impl<T: Trait> Module<T> {
 		};
 
 		// computes the omitted validation data for a particular parachain.
-		let full_candidate = |abridged: &AbridgedCandidateReceipt|
+		//
+		// pass the perceived relay chain height of the para-block. This is the block number of
+		// `abridged.relay_parent`.
+		let full_candidate = |
+			abridged: &AbridgedCandidateReceipt,
+			perceived_height: T::BlockNumber,
+		|
 			-> sp_std::result::Result<CandidateReceipt, sp_runtime::DispatchError>
 		{
 			let para_id = abridged.parachain_index;
-			let parent_head = match Self::parachain_head(&para_id)
-				.map(primitives::parachain::HeadData)
-			{
-				Some(p) => p,
-				None => Err(Error::<T>::ParentMismatch)?,
-			};
+			let local_validation = Self::local_validation_data(&para_id, perceived_height)
+				.ok_or(Error::<T>::ParentMismatch)?;
 
 			let omitted = OmittedValidationData {
 				global_validation: schedule.clone(),
-				local_validation: LocalValidationData {
-					parent_head,
-					balance: T::ParachainCurrency::free_balance(para_id),
-				},
+				local_validation,
 			};
 
 			Ok(abridged.clone().complete(omitted))
@@ -907,9 +1204,11 @@ impl<T: Trait> Module<T> {
 
 		let sorted_validators = make_sorted_duties(&duty_roster.validator_duty);
 
+		let relay_height_now = <system::Module<T>>::block_number();
 		let parent_hash = <system::Module<T>>::parent_hash();
 		let signing_context = Self::signing_context();
 		let localized_payload = |statement: Statement| localized_payload(statement, &signing_context);
+		let code_upgrade_delay = T::ValidationUpgradeDelay::get();
 
 		let mut validator_groups = GroupedDutyIter::new(&sorted_validators[..]);
 
@@ -926,10 +1225,14 @@ impl<T: Trait> Module<T> {
 			// orphaned before a block containing C is finalized. Care must be taken
 			// not to prune the data for C simply because an orphaned block contained
 			// it.
+
 			ensure!(
 				candidate.candidate().relay_parent.as_ref() == parent_hash.as_ref(),
 				Error::<T>::UnexpectedRelayParent,
 			);
+
+			// Since we only allow execution in context of parent hash.
+			let perceived_relay_block_height = <system::Module<T>>::block_number() - One::one();
 
 			ensure!(
 				candidate.validity_votes.len() >= majority_of(validator_group.len()),
@@ -942,11 +1245,49 @@ impl<T: Trait> Module<T> {
 			);
 
 			ensure!(
-				schedule.max_head_data_size >= candidate.candidate().head_data.0.len() as _,
+				schedule.max_head_data_size as usize >= candidate.candidate().head_data.0.len(),
 				Error::<T>::HeadDataTooLarge,
 			);
 
-			let full_candidate = full_candidate(candidate.candidate())?;
+			let full_candidate = full_candidate(
+				candidate.candidate(),
+				perceived_relay_block_height,
+			)?;
+
+			// apply any scheduled code upgrade.
+			if let Some(expected_at) = Self::code_upgrade_schedule(&para_id) {
+				if expected_at <= perceived_relay_block_height {
+					let new_code = FutureCode::take(&para_id);
+					<Self as Store>::FutureCodeUpgrades::remove(&para_id);
+
+					Self::do_code_upgrade(para_id, perceived_relay_block_height, &new_code);
+				}
+			}
+
+			if let Some(ref new_code) = full_candidate.commitments.new_validation_code {
+				ensure!(
+					full_candidate.local_validation.code_upgrade_allowed.is_some(),
+					Error::<T>::DisallowedCodeUpgrade,
+				);
+				ensure!(
+					schedule.max_code_size >= new_code.0.len() as u32,
+					Error::<T>::ValidationCodeTooLarge,
+				);
+
+				if code_upgrade_delay.is_zero() {
+					Self::do_code_upgrade(para_id, perceived_relay_block_height, new_code);
+				} else {
+					<Self as Store>::FutureCodeUpgrades::insert(
+						&para_id,
+						&(perceived_relay_block_height + code_upgrade_delay),
+					);
+					FutureCode::insert(
+						&para_id,
+						new_code,
+					);
+				}
+			}
+
 			let fees = full_candidate.commitments.fees;
 
 			ensure!(
@@ -1011,7 +1352,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		Ok(IncludedBlocks {
-			actual_number: <system::Module<T>>::block_number(),
+			actual_number: relay_height_now,
 			session: <session::Module<T>>::current_index(),
 			random_seed,
 			active_parachains: active_parachains.iter().map(|x| x.0).collect(),
@@ -1106,6 +1447,13 @@ impl<T> sp_std::fmt::Debug for ValidateDoubleVoteReports<T> where
 	}
 }
 
+impl<T> ValidateDoubleVoteReports<T> {
+	/// Create a new `ValidateDoubleVoteReports` struct.
+	pub fn new() -> Self {
+		ValidateDoubleVoteReports(sp_std::marker::PhantomData)
+	}
+}
+
 /// Custom validity error used while validating double vote reports.
 #[derive(RuntimeDebug)]
 #[repr(u8)]
@@ -1137,7 +1485,6 @@ impl<T: Trait + Send + Sync> SignedExtension for ValidateDoubleVoteReports<T> wh
 	type Call = <T as system::Trait>::Call;
 	type AdditionalSigned = ();
 	type Pre = ();
-	type DispatchInfo = DispatchInfo;
 
 	fn additional_signed(&self)
 		-> sp_std::result::Result<Self::AdditionalSigned, TransactionValidityError>
@@ -1149,7 +1496,7 @@ impl<T: Trait + Send + Sync> SignedExtension for ValidateDoubleVoteReports<T> wh
 		&self,
 		_who: &Self::AccountId,
 		call: &Self::Call,
-		_info: DispatchInfo,
+		_info: &DispatchInfoOf<Self::Call>,
 		_len: usize,
 	) -> TransactionValidity {
 		let r = ValidTransaction::default();
@@ -1196,28 +1543,30 @@ mod tests {
 	use super::Call as ParachainsCall;
 	use bitvec::{bitvec, vec::BitVec};
 	use sp_io::TestExternalities;
-	use sp_core::{H256, Blake2Hasher};
+	use sp_core::{H256, Blake2Hasher, sr25519};
 	use sp_trie::NodeCodec;
 	use sp_runtime::{
 		impl_opaque_keys,
-		Perbill, curve::PiecewiseLinear, testing::Header,
+		Perbill, curve::PiecewiseLinear,
 		traits::{
 			BlakeTwo256, IdentityLookup, SaturatedConversion,
-			OpaqueKeys,
+			OpaqueKeys, Extrinsic as ExtrinsicT,
 		},
 		testing::TestXt,
 	};
 	use primitives::{
 		parachain::{
-			CandidateReceipt, HeadData, ValidityAttestation, ValidatorId, Info as ParaInfo,
-			Scheduling, LocalValidationData, CandidateCommitments,
+			CandidateReceipt, ValidityAttestation, ValidatorId, Info as ParaInfo,
+			Scheduling, CandidateCommitments,
 		},
 		BlockNumber,
+		Header,
 	};
 	use keyring::Sr25519Keyring;
 	use frame_support::{
 		impl_outer_origin, impl_outer_dispatch, assert_ok, assert_err, parameter_types,
 		traits::{OnInitialize, OnFinalize},
+		weights::DispatchInfo,
 	};
 	use crate::parachains;
 	use crate::registrar;
@@ -1254,16 +1603,17 @@ mod tests {
 	pub struct Test;
 	parameter_types! {
 		pub const BlockHashCount: u32 = 250;
-		pub const MaximumBlockWeight: u32 = 4 * 1024 * 1024;
+		pub const MaximumBlockWeight: Weight = 4 * 1024 * 1024;
 		pub const MaximumBlockLength: u32 = 4 * 1024 * 1024;
 		pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
 	}
 
 	impl system::Trait for Test {
+		type BaseCallFilter = ();
 		type Origin = Origin;
 		type Call = Call;
 		type Index = u64;
-		type BlockNumber = u64;
+		type BlockNumber = BlockNumber;
 		type Hash = H256;
 		type Hashing = BlakeTwo256;
 		type AccountId = u64;
@@ -1272,6 +1622,10 @@ mod tests {
 		type Event = ();
 		type BlockHashCount = BlockHashCount;
 		type MaximumBlockWeight = MaximumBlockWeight;
+		type DbWeight = ();
+		type BlockExecutionWeight = ();
+		type ExtrinsicBaseWeight = ();
+		type MaximumExtrinsicWeight = MaximumBlockWeight;
 		type MaximumBlockLength = MaximumBlockLength;
 		type AvailableBlockRatio = AvailableBlockRatio;
 		type Version = ();
@@ -1279,6 +1633,13 @@ mod tests {
 		type AccountData = balances::AccountData<u128>;
 		type OnNewAccount = ();
 		type OnKilledAccount = ();
+	}
+
+	impl<C> system::offchain::SendTransactionTypes<C> for Test where
+		Call: From<C>,
+	{
+		type OverarchingCall = Call;
+		type Extrinsic = TestXt<Call, ()>;
 	}
 
 	parameter_types! {
@@ -1336,7 +1697,7 @@ mod tests {
 		const HOURS: BlockNumber = MINUTES * 60;
 	}
 	parameter_types! {
-		pub const EpochDuration: u64 = time::EPOCH_DURATION_IN_BLOCKS as u64;
+		pub const EpochDuration: BlockNumber = time::EPOCH_DURATION_IN_BLOCKS;
 		pub const ExpectedBlockTime: u64 = time::MILLISECS_PER_BLOCK;
 	}
 
@@ -1362,7 +1723,7 @@ mod tests {
 
 	pallet_staking_reward_curve::build! {
 		const REWARD_CURVE: PiecewiseLinear<'static> = curve!(
-			min_inflation: 0_025_000,
+			min_inflation: 0_025_000u64,
 			max_inflation: 0_100_000,
 			ideal_stake: 0_500_000,
 			falloff: 0_050_000,
@@ -1379,6 +1740,7 @@ mod tests {
 		pub const RewardCurve: &'static PiecewiseLinear<'static> = &REWARD_CURVE;
 		pub const MaxNominatorRewardedPerValidator: u32 = 64;
 		pub const ElectionLookahead: BlockNumber = 0;
+		pub const StakingUnsignedPriority: u64 = u64::max_value() / 2;
 	}
 
 	pub struct CurrencyToVoteHandler;
@@ -1409,7 +1771,9 @@ mod tests {
 		type NextNewSession = Session;
 		type ElectionLookahead = ElectionLookahead;
 		type Call = Call;
-		type SubmitTransaction = system::offchain::TransactionSubmitter<(), Test, TestXt<Call, ()>>;
+		type UnsignedPriority = StakingUnsignedPriority;
+		type MaxIterations = ();
+		type MinSolutionScoreBump = ();
 	}
 
 	impl attestations::Trait for Test {
@@ -1419,8 +1783,8 @@ mod tests {
 	}
 
 	parameter_types!{
-		pub const LeasePeriod: u64 = 10;
-		pub const EndingPeriod: u64 = 3;
+		pub const LeasePeriod: BlockNumber = 10;
+		pub const EndingPeriod: BlockNumber = 3;
 	}
 
 	impl slots::Trait for Test {
@@ -1448,31 +1812,96 @@ mod tests {
 		type MaxRetries = MaxRetries;
 	}
 
+	parameter_types! {
+		pub OffencesWeightSoftLimit: Weight = Perbill::from_percent(60) * MaximumBlockWeight::get();
+	}
+
 	impl offences::Trait for Test {
 		type Event = ();
 		type IdentificationTuple = session::historical::IdentificationTuple<Self>;
 		type OnOffenceHandler = Staking;
+		type WeightSoftLimit = OffencesWeightSoftLimit;
 	}
 
 	parameter_types! {
 		pub const MaxHeadDataSize: u32 = 100;
 		pub const MaxCodeSize: u32 = 100;
+
+		pub const ValidationUpgradeFrequency: BlockNumber = 10;
+		pub const ValidationUpgradeDelay: BlockNumber = 2;
+		pub const SlashPeriod: BlockNumber = 50;
+	}
+
+	// This is needed for a custom `AccountId` type which is `u64` in testing here.
+	pub mod test_keys {
+		use sp_core::{crypto::KeyTypeId, sr25519};
+		pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"test");
+
+		mod app {
+			use sp_application_crypto::{app_crypto, sr25519};
+			use super::super::Parachains;
+
+			app_crypto!(sr25519, super::KEY_TYPE);
+
+			impl sp_runtime::traits::IdentifyAccount for Public {
+				type AccountId = u64;
+
+				fn into_account(self) -> Self::AccountId {
+					Parachains::authorities().iter().position(|b| *b == self.0.clone().into()).unwrap() as u64
+				}
+			}
+		}
+
+		pub type ReporterId = app::Public;
+		pub struct ReporterAuthorityId;
+		impl system::offchain::AppCrypto<ReporterId, sr25519::Signature> for ReporterAuthorityId {
+			type RuntimeAppPublic = ReporterId;
+			type GenericSignature = sr25519::Signature;
+			type GenericPublic = sr25519::Public;
+		}
 	}
 
 	impl Trait for Test {
+		type AuthorityId = test_keys::ReporterAuthorityId;
 		type Origin = Origin;
 		type Call = Call;
 		type ParachainCurrency = Balances;
+		type BlockNumberConversion = sp_runtime::traits::Identity;
 		type Randomness = RandomnessCollectiveFlip;
 		type ActiveParachains = registrar::Module<Test>;
 		type Registrar = registrar::Module<Test>;
 		type MaxCodeSize = MaxCodeSize;
 		type MaxHeadDataSize = MaxHeadDataSize;
-		type Proof = <Historical as KeyOwnerProofSystem<(KeyTypeId, Vec<u8>)>>::Proof;
-		type IdentificationTuple = <Self::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, Vec<u8>)>>::IdentificationTuple;
+		type ValidationUpgradeFrequency = ValidationUpgradeFrequency;
+		type ValidationUpgradeDelay = ValidationUpgradeDelay;
+		type SlashPeriod = SlashPeriod;
+		type Proof =
+			<Historical as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::Proof;
+		type IdentificationTuple =
+			<Historical as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::IdentificationTuple;
 		type ReportOffence = Offences;
 		type BlockHashConversion = sp_runtime::traits::Identity;
 		type KeyOwnerProofSystem = Historical;
+	}
+
+	type Extrinsic = TestXt<Call, ()>;
+
+	impl<LocalCall> system::offchain::CreateSignedTransaction<LocalCall> for Test where
+		Call: From<LocalCall>,
+	{
+		fn create_transaction<C: system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+			call: Call,
+			_public: test_keys::ReporterId,
+			_account: <Test as system::Trait>::AccountId,
+			nonce: <Test as system::Trait>::Index,
+		) -> Option<(Call, <Extrinsic as ExtrinsicT>::SignaturePayload)> {
+			Some((call, (nonce, ())))
+		}
+	}
+
+	impl system::offchain::SigningTypes for Test {
+		type Public = test_keys::ReporterId;
+		type Signature = sr25519::Signature;
 	}
 
 	type Parachains = Module<Test>;
@@ -1486,7 +1915,7 @@ mod tests {
 	type Registrar = registrar::Module<Test>;
 	type Historical = session::historical::Module<Test>;
 
-	fn new_test_ext(parachains: Vec<(ParaId, Vec<u8>, Vec<u8>)>) -> TestExternalities {
+	fn new_test_ext(parachains: Vec<(ParaId, ValidationCode, HeadData)>) -> TestExternalities {
 		use staking::StakerStatus;
 		use babe::AuthorityId as BabeAuthorityId;
 
@@ -1564,34 +1993,31 @@ mod tests {
 	}
 
 	fn report_double_vote(
-		report: DoubleVoteReport<session::historical::Proof>,
+		report: DoubleVoteReport<sp_session::MembershipProof>,
 	) -> Result<ParachainsCall<Test>, TransactionValidityError> {
 		let inner = ParachainsCall::report_double_vote(report);
 		let call = Call::Parachains(inner.clone());
 
 		ValidateDoubleVoteReports::<Test>(sp_std::marker::PhantomData)
-			.validate(&0, &call, DispatchInfo::default(), 0)?;
+			.validate(&0, &call, &DispatchInfo::default(), 0)?;
 
 		Ok(inner)
 	}
 
 	// creates a template candidate which pins to correct relay-chain state.
 	fn raw_candidate(para_id: ParaId) -> CandidateReceipt {
+		let mut head_data = Parachains::parachain_head(&para_id).unwrap();
+		head_data.0.extend(para_id.encode());
+
 		CandidateReceipt {
 			parachain_index: para_id,
 			relay_parent: System::parent_hash(),
-			head_data: Default::default(),
+			head_data,
 			collator: Default::default(),
 			signature: Default::default(),
 			pov_block_hash: Default::default(),
-			global_validation: GlobalValidationSchedule {
-				max_code_size: <Test as Trait>::MaxCodeSize::get(),
-				max_head_data_size: <Test as Trait>::MaxHeadDataSize::get(),
-			},
-			local_validation: LocalValidationData {
-				parent_head: HeadData(Parachains::parachain_head(&para_id).unwrap()),
-				balance: <Balances as ParachainCurrency<u64>>::free_balance(para_id),
-			},
+			global_validation: Parachains::global_validation_schedule(),
+			local_validation: Parachains::current_local_validation_data(&para_id).unwrap(),
 			commitments: CandidateCommitments::default(),
 		}
 	}
@@ -1668,13 +2094,12 @@ mod tests {
 
 	fn start_session(session_index: SessionIndex) {
 		let mut parent_hash = System::parent_hash();
-		use sp_runtime::traits::Header;
 
 		for i in Session::current_index()..session_index {
 			println!("session index {}", i);
 			Staking::on_finalize(System::block_number());
 			System::set_block_number((i + 1).into());
-			Timestamp::set_timestamp(System::block_number() * 6000);
+			Timestamp::set_timestamp(System::block_number() as primitives::Moment * 6000);
 
 			// In order to be able to use `System::parent_hash()` in the tests
 			// we need to first get it via `System::finalize` and then set it
@@ -1688,7 +2113,7 @@ mod tests {
 			}
 
 			System::initialize(
-				&(i as u64 + 1),
+				&(i as BlockNumber + 1),
 				&parent_hash,
 				&Default::default(),
 				&Default::default(),
@@ -1712,11 +2137,15 @@ mod tests {
 		Registrar::on_initialize(System::block_number());
 		Parachains::on_initialize(System::block_number());
 	}
-	fn run_to_block(n: u64) {
+	fn run_to_block(n: BlockNumber) {
 		println!("Running until block {}", n);
 		while System::block_number() < n {
 			if System::block_number() > 1 {
 				println!("Finalizing {}", System::block_number());
+				if !DidUpdate::get().is_some() {
+					Parachains::set_heads(Origin::none(), vec![]).unwrap();
+				}
+
 				Parachains::on_finalize(System::block_number());
 				Registrar::on_finalize(System::block_number());
 				System::on_finalize(System::block_number());
@@ -1736,9 +2165,9 @@ mod tests {
 	#[test]
 	fn check_dispatch_upward_works() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
-			(2u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
+			(2u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			init_block();
@@ -1828,7 +2257,7 @@ mod tests {
 	#[test]
 	fn check_queue_upward_messages_works() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1856,7 +2285,7 @@ mod tests {
 	#[test]
 	fn check_queue_full_upward_messages_fails() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1892,7 +2321,7 @@ mod tests {
 	#[test]
 	fn check_queued_too_many_upward_messages_fails() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1914,7 +2343,7 @@ mod tests {
 	#[test]
 	fn check_queued_total_oversize_upward_messages_fails() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1935,7 +2364,7 @@ mod tests {
 	#[test]
 	fn check_queued_pre_jumbo_upward_messages_fails() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1956,7 +2385,7 @@ mod tests {
 	#[test]
 	fn check_queued_post_jumbo_upward_messages_fails() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
 		];
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
@@ -1978,8 +2407,8 @@ mod tests {
 	fn upward_queuing_works() {
 		// That the list of egress queue roots is in ascending order by `ParaId`.
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
@@ -1995,10 +2424,7 @@ mod tests {
 			];
 			candidates.iter_mut().for_each(make_attestations);
 
-			assert_ok!(Parachains::dispatch(
-				set_heads(candidates),
-				Origin::NONE,
-			));
+			assert_ok!(Call::from(set_heads(candidates)).dispatch(Origin::none()));
 
 			assert!(<RelayDispatchQueue>::get(ParaId::from(0)).is_empty());
 			assert!(<RelayDispatchQueue>::get(ParaId::from(1)).is_empty());
@@ -2008,42 +2434,48 @@ mod tests {
 	#[test]
 	fn active_parachains_should_work() {
 		let parachains = vec![
-			(5u32.into(), vec![1,2,3], vec![1]),
-			(100u32.into(), vec![4,5,6], vec![2]),
+			(5u32.into(), vec![1,2,3].into(), vec![1].into()),
+			(100u32.into(), vec![4,5,6].into(), vec![2].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
 			assert_eq!(Parachains::active_parachains(), vec![(5u32.into(), None), (100u32.into(), None)]);
-			assert_eq!(Parachains::parachain_code(ParaId::from(5u32)), Some(vec![1, 2, 3]));
-			assert_eq!(Parachains::parachain_code(ParaId::from(100u32)), Some(vec![4, 5, 6]));
+			assert_eq!(Parachains::parachain_code(ParaId::from(5u32)), Some(vec![1, 2, 3].into()));
+			assert_eq!(Parachains::parachain_code(ParaId::from(100u32)), Some(vec![4, 5, 6].into()));
 		});
 	}
 
 	#[test]
 	fn register_deregister() {
 		let parachains = vec![
-			(5u32.into(), vec![1,2,3], vec![1]),
-			(100u32.into(), vec![4,5,6], vec![2,]),
+			(5u32.into(), vec![1,2,3].into(), vec![1].into()),
+			(100u32.into(), vec![4,5,6].into(), vec![2,].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
 			assert_eq!(Parachains::active_parachains(), vec![(5u32.into(), None), (100u32.into(), None)]);
 
-			assert_eq!(Parachains::parachain_code(ParaId::from(5u32)), Some(vec![1,2,3]));
-			assert_eq!(Parachains::parachain_code(ParaId::from(100u32)), Some(vec![4,5,6]));
+			assert_eq!(Parachains::parachain_code(ParaId::from(5u32)), Some(vec![1,2,3].into()));
+			assert_eq!(Parachains::parachain_code(ParaId::from(100u32)), Some(vec![4,5,6].into()));
 
-			assert_ok!(Registrar::register_para(Origin::ROOT, 99u32.into(), ParaInfo{scheduling: Scheduling::Always}, vec![7,8,9], vec![1, 1, 1]));
-			assert_ok!(Parachains::set_heads(Origin::NONE, vec![]));
+			assert_ok!(Registrar::register_para(
+				Origin::root(),
+				99u32.into(),
+				ParaInfo{scheduling: Scheduling::Always},
+				vec![7,8,9].into(),
+				vec![1, 1, 1].into(),
+			));
+			assert_ok!(Parachains::set_heads(Origin::none(), vec![]));
 
 			run_to_block(3);
 
 			assert_eq!(Parachains::active_parachains(), vec![(5u32.into(), None), (99u32.into(), None), (100u32.into(), None)]);
-			assert_eq!(Parachains::parachain_code(&ParaId::from(99u32)), Some(vec![7,8,9]));
+			assert_eq!(Parachains::parachain_code(&ParaId::from(99u32)), Some(vec![7,8,9].into()));
 
-			assert_ok!(Registrar::deregister_para(Origin::ROOT, 5u32.into()));
-			assert_ok!(Parachains::set_heads(Origin::NONE, vec![]));
+			assert_ok!(Registrar::deregister_para(Origin::root(), 5u32.into()));
+			assert_ok!(Parachains::set_heads(Origin::none(), vec![]));
 
 			// parachain still active this block. another block must pass before it's inactive.
 			run_to_block(4);
@@ -2056,8 +2488,8 @@ mod tests {
 	#[test]
 	fn duty_roster_works() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
@@ -2092,22 +2524,22 @@ mod tests {
 	#[test]
 	fn unattested_candidate_is_rejected() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
 			run_to_block(2);
 			let candidate = make_blank_attested(raw_candidate(0.into()));
-			assert!(Parachains::dispatch(set_heads(vec![candidate]), Origin::NONE).is_err());
+			assert!(Call::from(set_heads(vec![candidate])).dispatch(Origin::none()).is_err());
 		})
 	}
 
 	#[test]
 	fn attested_candidates_accepted_in_order() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
@@ -2120,23 +2552,22 @@ mod tests {
 			make_attestations(&mut candidate_a);
 			make_attestations(&mut candidate_b);
 
-			assert!(Parachains::dispatch(
-				set_heads(vec![candidate_b.clone(), candidate_a.clone()]),
-				Origin::NONE,
-			).is_err());
+			assert!(Call::from(set_heads(vec![candidate_b.clone(), candidate_a.clone()]))
+				.dispatch(Origin::none()).is_err());
 
-			assert_ok!(Parachains::dispatch(
-				set_heads(vec![candidate_a.clone(), candidate_b.clone()]),
-				Origin::NONE,
-			));
+			assert_ok!(Call::from(set_heads(vec![candidate_a.clone(), candidate_b.clone()]))
+				.dispatch(Origin::none()));
+
+			assert_eq!(Heads::get(&ParaId::from(0)), Some(candidate_a.candidate.head_data));
+			assert_eq!(Heads::get(&ParaId::from(1)), Some(candidate_b.candidate.head_data));
 		});
 	}
 
 	#[test]
 	fn duplicate_vote_is_rejected() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
@@ -2149,18 +2580,15 @@ mod tests {
 			double_validity.validity_votes.push(candidate.validity_votes[0].clone());
 			double_validity.validator_indices.push(true);
 
-			assert!(Parachains::dispatch(
-				set_heads(vec![double_validity]),
-				Origin::NONE,
-			).is_err());
+			assert!(Call::from(set_heads(vec![double_validity])).dispatch(Origin::none()).is_err());
 		});
 	}
 
 	#[test]
 	fn validators_not_from_group_is_rejected() {
 		let parachains = vec![
-			(0u32.into(), vec![], vec![]),
-			(1u32.into(), vec![], vec![]),
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		new_test_ext(parachains.clone()).execute_with(|| {
@@ -2173,10 +2601,7 @@ mod tests {
 			assert!(candidate.validator_indices.pop().is_some());
 			candidate.validator_indices.append(&mut bitvec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
-			assert!(Parachains::dispatch(
-				set_heads(vec![candidate]),
-				Origin::NONE,
-			).is_err());
+			assert!(Call::from(set_heads(vec![candidate])).dispatch(Origin::none()).is_err());
 		});
 	}
 
@@ -2187,9 +2612,375 @@ mod tests {
 	}
 
 	#[test]
+	fn para_past_code_meta_gives_right_code() {
+		let mut past_code = ParaPastCodeMeta::default();
+		assert_eq!(past_code.code_at(0u32), Some(UseCodeAt::Current));
+
+		past_code.note_replacement(10);
+		assert_eq!(past_code.code_at(0), Some(UseCodeAt::ReplacedAt(10)));
+		assert_eq!(past_code.code_at(10), Some(UseCodeAt::ReplacedAt(10)));
+		assert_eq!(past_code.code_at(11), Some(UseCodeAt::Current));
+
+		past_code.note_replacement(20);
+		assert_eq!(past_code.code_at(1), Some(UseCodeAt::ReplacedAt(10)));
+		assert_eq!(past_code.code_at(10), Some(UseCodeAt::ReplacedAt(10)));
+		assert_eq!(past_code.code_at(11), Some(UseCodeAt::ReplacedAt(20)));
+		assert_eq!(past_code.code_at(20), Some(UseCodeAt::ReplacedAt(20)));
+		assert_eq!(past_code.code_at(21), Some(UseCodeAt::Current));
+
+		past_code.last_pruned = Some(5);
+		assert_eq!(past_code.code_at(1), None);
+		assert_eq!(past_code.code_at(5), None);
+		assert_eq!(past_code.code_at(6), Some(UseCodeAt::ReplacedAt(10)));
+	}
+
+	#[test]
+	fn para_past_code_pruning_works_correctly() {
+		let mut past_code = ParaPastCodeMeta::default();
+		past_code.note_replacement(10u32);
+		past_code.note_replacement(20);
+		past_code.note_replacement(30);
+
+		let old = past_code.clone();
+		assert!(past_code.prune_up_to(9).collect::<Vec<_>>().is_empty());
+		assert_eq!(old, past_code);
+
+		assert_eq!(past_code.prune_up_to(10).collect::<Vec<_>>(), vec![10]);
+		assert_eq!(past_code, ParaPastCodeMeta {
+			upgrade_times: vec![30, 20],
+			last_pruned: Some(10),
+		});
+
+		assert_eq!(past_code.prune_up_to(21).collect::<Vec<_>>(), vec![20]);
+		assert_eq!(past_code, ParaPastCodeMeta {
+			upgrade_times: vec![30],
+			last_pruned: Some(20),
+		});
+
+		past_code.note_replacement(40);
+		past_code.note_replacement(50);
+		past_code.note_replacement(60);
+
+		assert_eq!(past_code, ParaPastCodeMeta {
+			upgrade_times: vec![60, 50, 40, 30],
+			last_pruned: Some(20),
+		});
+
+		assert_eq!(past_code.prune_up_to(60).collect::<Vec<_>>(), vec![30, 40, 50, 60]);
+		assert_eq!(past_code, ParaPastCodeMeta {
+			upgrade_times: Vec::new(),
+			last_pruned: Some(60),
+		});
+	}
+
+	#[test]
+	fn para_past_code_pruning_in_initialize() {
+		let parachains = vec![
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let id = ParaId::from(0u32);
+			let at_block: BlockNumber = 10;
+			<Parachains as Store>::PastCode::insert(&(id, at_block), &ValidationCode(vec![1, 2, 3]));
+			<Parachains as Store>::PastCodePruning::put(&vec![(id, at_block)]);
+
+			{
+				let mut code_meta = Parachains::past_code_meta(&id);
+				code_meta.note_replacement(at_block);
+				<Parachains as Store>::PastCodeMeta::insert(&id, &code_meta);
+			}
+
+			let pruned_at: BlockNumber = at_block + SlashPeriod::get() + 1;
+			assert_eq!(<Parachains as Store>::PastCode::get(&(id, at_block)), Some(vec![1, 2, 3].into()));
+
+			run_to_block(pruned_at - 1);
+			assert_eq!(<Parachains as Store>::PastCode::get(&(id, at_block)), Some(vec![1, 2, 3].into()));
+			assert_eq!(Parachains::past_code_meta(&id).most_recent_change(), Some(at_block));
+
+			run_to_block(pruned_at);
+			assert!(<Parachains as Store>::PastCode::get(&(id, at_block)).is_none());
+			assert!(Parachains::past_code_meta(&id).most_recent_change().is_none());
+		});
+	}
+
+	#[test]
+	fn note_past_code_sets_up_pruning_correctly() {
+		let parachains = vec![
+			(0u32.into(), vec![].into(), vec![].into()),
+			(1u32.into(), vec![].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let id_a = ParaId::from(0u32);
+			let id_b = ParaId::from(1u32);
+
+			Parachains::note_past_code(id_a, 10, vec![1, 2, 3].into());
+			Parachains::note_past_code(id_b, 20, vec![4, 5, 6].into());
+
+			assert_eq!(Parachains::past_code_pruning_tasks(), vec![(id_a, 10), (id_b, 20)]);
+			assert_eq!(
+				Parachains::past_code_meta(&id_a),
+				ParaPastCodeMeta {
+					upgrade_times: vec![10],
+					last_pruned: None,
+				}
+			);
+			assert_eq!(
+				Parachains::past_code_meta(&id_b),
+				ParaPastCodeMeta {
+					upgrade_times: vec![20],
+					last_pruned: None,
+				}
+			);
+		});
+	}
+
+	#[test]
+	fn code_upgrade_applied_after_delay() {
+		let parachains = vec![
+			(0u32.into(), vec![1, 2, 3].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let para_id = ParaId::from(0);
+			let new_code = ValidationCode(vec![4, 5, 6]);
+
+			run_to_block(2);
+			assert_eq!(Parachains::active_parachains().len(), 1);
+			assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+
+			let applied_after ={
+				let raw_candidate = raw_candidate(para_id);
+				let applied_after = raw_candidate.local_validation.code_upgrade_allowed.unwrap();
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				candidate_a.candidate.commitments.new_validation_code = Some(new_code.clone());
+
+				// this parablock is in the context of block 1.
+				assert_eq!(applied_after, 1 + ValidationUpgradeDelay::get());
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert!(Parachains::past_code_meta(&para_id).most_recent_change().is_none());
+				assert_eq!(Parachains::code_upgrade_schedule(&para_id), Some(applied_after));
+				assert_eq!(<Parachains as Store>::FutureCode::get(&para_id), new_code);
+				assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+
+				applied_after
+			};
+
+			run_to_block(applied_after);
+
+			// the candidate is in the context of the parent of `applied_after`,
+			// thus does not trigger the code upgrade.
+			{
+				let raw_candidate = raw_candidate(para_id);
+				assert!(raw_candidate.local_validation.code_upgrade_allowed.is_none());
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert!(Parachains::past_code_meta(&para_id).most_recent_change().is_none());
+				assert_eq!(Parachains::code_upgrade_schedule(&para_id), Some(applied_after));
+				assert_eq!(<Parachains as Store>::FutureCode::get(&para_id), new_code);
+				assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+			}
+
+			run_to_block(applied_after + 1);
+
+			// the candidate is in the context of `applied_after`, and triggers
+			// the upgrade.
+			{
+				let raw_candidate = raw_candidate(para_id);
+				assert!(raw_candidate.local_validation.code_upgrade_allowed.is_some());
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert_eq!(
+					Parachains::past_code_meta(&para_id).most_recent_change(),
+					Some(applied_after),
+				);
+				assert_eq!(
+					<Parachains as Store>::PastCode::get(&(para_id, applied_after)),
+					Some(vec![1, 2, 3,].into()),
+				);
+				assert!(Parachains::code_upgrade_schedule(&para_id).is_none());
+				assert!(<Parachains as Store>::FutureCode::get(&para_id).0.is_empty());
+				assert_eq!(Parachains::parachain_code(&para_id), Some(new_code));
+			}
+		});
+	}
+
+	#[test]
+	fn code_upgrade_applied_after_delay_even_when_late() {
+		let parachains = vec![
+			(0u32.into(), vec![1, 2, 3].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let para_id = ParaId::from(0);
+			let new_code = ValidationCode(vec![4, 5, 6]);
+
+			run_to_block(2);
+			assert_eq!(Parachains::active_parachains().len(), 1);
+			assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+
+			let applied_after ={
+				let raw_candidate = raw_candidate(para_id);
+				let applied_after = raw_candidate.local_validation.code_upgrade_allowed.unwrap();
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				candidate_a.candidate.commitments.new_validation_code = Some(new_code.clone());
+
+				// this parablock is in the context of block 1.
+				assert_eq!(applied_after, 1 + ValidationUpgradeDelay::get());
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert!(Parachains::past_code_meta(&para_id).most_recent_change().is_none());
+				assert_eq!(Parachains::code_upgrade_schedule(&para_id), Some(applied_after));
+				assert_eq!(<Parachains as Store>::FutureCode::get(&para_id), new_code);
+				assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+
+				applied_after
+			};
+
+			run_to_block(applied_after + 1 + 4);
+
+			{
+				let raw_candidate = raw_candidate(para_id);
+				assert!(raw_candidate.local_validation.code_upgrade_allowed.is_some());
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert_eq!(
+					Parachains::past_code_meta(&para_id).most_recent_change(),
+					Some(applied_after + 4),
+				);
+				assert_eq!(
+					<Parachains as Store>::PastCode::get(&(para_id, applied_after + 4)),
+					Some(vec![1, 2, 3,].into()),
+				);
+				assert!(Parachains::code_upgrade_schedule(&para_id).is_none());
+				assert!(<Parachains as Store>::FutureCode::get(&para_id).0.is_empty());
+				assert_eq!(Parachains::parachain_code(&para_id), Some(new_code));
+			}
+		});
+	}
+
+	#[test]
+	fn submit_code_change_when_not_allowed_is_err() {
+		let parachains = vec![
+			(0u32.into(), vec![1, 2, 3].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let para_id = ParaId::from(0);
+			let new_code = ValidationCode(vec![4, 5, 6]);
+
+			run_to_block(2);
+
+			{
+				let raw_candidate = raw_candidate(para_id);
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				candidate_a.candidate.commitments.new_validation_code = Some(new_code.clone());
+
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+			};
+
+			run_to_block(3);
+
+			{
+				let raw_candidate = raw_candidate(para_id);
+				assert!(raw_candidate.local_validation.code_upgrade_allowed.is_none());
+				let mut candidate_a = make_blank_attested(raw_candidate);
+				candidate_a.candidate.commitments.new_validation_code = Some(vec![1, 2, 3].into());
+
+				make_attestations(&mut candidate_a);
+
+				assert_err!(
+					Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()),
+					Error::<Test>::DisallowedCodeUpgrade,
+				);
+			}
+		});
+	}
+
+	#[test]
+	fn full_parachain_cleanup_storage() {
+		let parachains = vec![
+			(0u32.into(), vec![1, 2, 3].into(), vec![].into()),
+		];
+
+		new_test_ext(parachains.clone()).execute_with(|| {
+			let para_id = ParaId::from(0);
+			let new_code = ValidationCode(vec![4, 5, 6]);
+
+			run_to_block(2);
+			{
+				let raw_candidate = raw_candidate(para_id);
+				let applied_after = raw_candidate.local_validation.code_upgrade_allowed.unwrap();
+				let mut candidate_a = make_blank_attested(raw_candidate);
+
+				candidate_a.candidate.commitments.new_validation_code = Some(new_code.clone());
+
+				// this parablock is in the context of block 1.
+				assert_eq!(applied_after, 1 + ValidationUpgradeDelay::get());
+				make_attestations(&mut candidate_a);
+
+				assert_ok!(Call::from(set_heads(vec![candidate_a.clone()])).dispatch(Origin::none()));
+
+				assert!(Parachains::past_code_meta(&para_id).most_recent_change().is_none());
+				assert_eq!(Parachains::code_upgrade_schedule(&para_id), Some(applied_after));
+				assert_eq!(<Parachains as Store>::FutureCode::get(&para_id), new_code);
+				assert_eq!(Parachains::parachain_code(&para_id), Some(vec![1, 2, 3].into()));
+
+				assert!(Parachains::past_code_pruning_tasks().is_empty());
+			};
+
+			Parachains::cleanup_para(para_id);
+
+			// cleaning up the parachain should place the current parachain code
+			// into the past code buffer & schedule cleanup.
+			assert_eq!(Parachains::past_code_meta(&para_id).most_recent_change(), Some(2));
+			assert_eq!(<Parachains as Store>::PastCode::get(&(para_id, 2)), Some(vec![1, 2, 3].into()));
+			assert_eq!(Parachains::past_code_pruning_tasks(), vec![(para_id, 2)]);
+
+			// any future upgrades haven't been used to validate yet, so those
+			// are cleaned up immediately.
+			assert!(Parachains::code_upgrade_schedule(&para_id).is_none());
+			assert!(<Parachains as Store>::FutureCode::get(&para_id).0.is_empty());
+			assert!(Parachains::parachain_code(&para_id).is_none());
+
+			let cleaned_up_at = 2 + SlashPeriod::get() + 1;
+			run_to_block(cleaned_up_at);
+
+			// now the final cleanup: last past code cleaned up, and this triggers meta cleanup.
+			assert_eq!(Parachains::past_code_meta(&para_id), Default::default());
+			assert!(<Parachains as Store>::PastCode::get(&(para_id, 2)).is_none());
+			assert!(Parachains::past_code_pruning_tasks().is_empty());
+		});
+	}
+
+	#[test]
 	fn double_vote_candidate_and_valid_works() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2200,13 +2991,13 @@ mod tests {
 
 		// Test that a Candidate and Valid statements on the same candidate get slashed.
 		new_test_ext(parachains.clone()).execute_with(|| {
-			let candidate = raw_candidate(1.into()).abridge().0;
-			let candidate_hash = candidate.hash();
-
 			assert_eq!(Staking::current_era(), Some(0));
 			assert_eq!(Session::current_index(), 0);
 
 			start_era(1);
+
+			let candidate = raw_candidate(1.into()).abridge().0;
+			let candidate_hash = candidate.hash();
 
 			let authorities = Parachains::authorities();
 			let authority_index = 0;
@@ -2250,7 +3041,7 @@ mod tests {
 
 			let inner = report_double_vote(report).unwrap();
 
-			assert_ok!(Parachains::dispatch(inner, Origin::signed(1)));
+			assert_ok!(Call::from(inner).dispatch(Origin::signed(1)));
 
 			start_era(2);
 
@@ -2287,7 +3078,7 @@ mod tests {
 	#[test]
 	fn double_vote_candidate_and_invalid_works() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2298,10 +3089,10 @@ mod tests {
 
 		// Test that a Candidate and Invalid statements on the same candidate get slashed.
 		new_test_ext(parachains.clone()).execute_with(|| {
+			start_era(1);
+
 			let candidate = raw_candidate(1.into()).abridge().0;
 			let candidate_hash = candidate.hash();
-
-			start_era(1);
 
 			let authorities = Parachains::authorities();
 			let authority_index = 0;
@@ -2343,10 +3134,7 @@ mod tests {
 				signing_context,
 			};
 
-			assert_ok!(Parachains::dispatch(
-				report_double_vote(report).unwrap(),
-				Origin::signed(1),
-			));
+			assert_ok!(Call::from(report_double_vote(report).unwrap()).dispatch(Origin::signed(1)));
 
 			start_era(2);
 
@@ -2384,7 +3172,7 @@ mod tests {
 	#[test]
 	fn double_vote_valid_and_invalid_works() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2395,10 +3183,10 @@ mod tests {
 
 		// Test that an Invalid and Valid statements on the same candidate get slashed.
 		new_test_ext(parachains.clone()).execute_with(|| {
+			start_era(1);
+
 			let candidate = raw_candidate(1.into()).abridge().0;
 			let candidate_hash = candidate.hash();
-
-			start_era(1);
 
 			let authorities = Parachains::authorities();
 			let authority_index = 0;
@@ -2440,10 +3228,7 @@ mod tests {
 				signing_context,
 			};
 
-			assert_ok!(Parachains::dispatch(
-				report_double_vote(report).unwrap(),
-				Origin::signed(1),
-			));
+			assert_ok!(Call::from(report_double_vote(report).unwrap()).dispatch(Origin::signed(1)));
 
 			start_era(2);
 
@@ -2481,7 +3266,7 @@ mod tests {
 	#[test]
 	fn double_vote_submit_twice_works() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2492,13 +3277,13 @@ mod tests {
 
 		// Test that a Candidate and Valid statements on the same candidate get slashed.
 		new_test_ext(parachains.clone()).execute_with(|| {
-			let candidate = raw_candidate(1.into()).abridge().0;
-			let candidate_hash = candidate.hash();
-
 			assert_eq!(Staking::current_era(), Some(0));
 			assert_eq!(Session::current_index(), 0);
 
 			start_era(1);
+
+			let candidate = raw_candidate(1.into()).abridge().0;
+			let candidate_hash = candidate.hash();
 
 			let authorities = Parachains::authorities();
 			let authority_index = 0;
@@ -2540,15 +3325,9 @@ mod tests {
 				signing_context,
 			};
 
-			assert_ok!(Parachains::dispatch(
-				report_double_vote(report.clone()).unwrap(),
-				Origin::signed(1),
-			));
+			assert_ok!(Call::from(report_double_vote(report.clone()).unwrap()).dispatch(Origin::signed(1)));
 
-			assert!(Parachains::dispatch(
-					report_double_vote(report).unwrap(),
-					Origin::signed(1),
-				).is_err()
+			assert!(Call::from(report_double_vote(report).unwrap()).dispatch(Origin::signed(1)).is_err()
 			);
 
 			start_era(2);
@@ -2587,7 +3366,7 @@ mod tests {
 	#[test]
 	fn double_vote_submit_invalid_works() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2598,13 +3377,13 @@ mod tests {
 
 		// Test that a Candidate and Valid statements on the same candidate get slashed.
 		new_test_ext(parachains.clone()).execute_with(|| {
-			let candidate = raw_candidate(1.into()).abridge().0;
-			let candidate_hash = candidate.hash();
-
 			assert_eq!(Staking::current_era(), Some(0));
 			assert_eq!(Session::current_index(), 0);
 
 			start_era(1);
+
+			let candidate = raw_candidate(1.into()).abridge().0;
+			let candidate_hash = candidate.hash();
 
 			let authorities = Parachains::authorities();
 			let authority_1_index = 0;
@@ -2646,7 +3425,7 @@ mod tests {
 	#[test]
 	fn double_vote_proof_session_mismatch_fails() {
 		let parachains = vec![
-			(1u32.into(), vec![], vec![]),
+			(1u32.into(), vec![].into(), vec![].into()),
 		];
 
 		let extract_key = |public: ValidatorId| {
@@ -2658,13 +3437,13 @@ mod tests {
 		// Test that submitting a report with a session mismatch between the `parent_hash`
 		// and the proof itself fails.
 		new_test_ext(parachains.clone()).execute_with(|| {
-			let candidate = raw_candidate(1.into()).abridge().0;
-			let candidate_hash = candidate.hash();
-
 			assert_eq!(Staking::current_era(), Some(0));
 			assert_eq!(Session::current_index(), 0);
 
 			start_era(1);
+
+			let candidate = raw_candidate(1.into()).abridge().0;
+			let candidate_hash = candidate.hash();
 
 			let authorities = Parachains::authorities();
 			let authority_index = 0;

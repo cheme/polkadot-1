@@ -1,8 +1,8 @@
 [package]
 name = "polkadot-cli"
-version = "0.7.28"
+version = "0.8.10"
 authors = ["Parity Technologies <admin@parity.io>"]
-description = "Polkadot node implementation in Rust."
+description = "Polkadot Relay-chain Client Node"
 edition = "2018"
 
 [package.metadata.wasm-pack.profile.release]
@@ -20,33 +20,40 @@ structopt = "0.3.8"
 sp-api = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sp-core = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sp-runtime = { git = "https://github.com/paritytech/substrate", branch = "master" }
-sc-client = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sc-client-api = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sc-client-db = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sc-executor = { git = "https://github.com/paritytech/substrate", branch = "master" }
-service = { package = "polkadot-service", path = "../service", default-features = false }
+service = { package = "polkadot-service", path = "../service", default-features = false, optional = true }
+service-new = { package = "polkadot-service-new", path = "../node/service", default-features = false, optional = true }
 
 tokio = { version = "0.2.13", features = ["rt-threaded"], optional = true }
 frame-benchmarking-cli = { git = "https://github.com/paritytech/substrate", branch = "master", optional = true }
 sc-cli = { git = "https://github.com/paritytech/substrate", branch = "master", optional = true }
+sc-service = { git = "https://github.com/paritytech/substrate", branch = "master", optional = true }
 
 wasm-bindgen = { version = "0.2.57", optional = true }
 wasm-bindgen-futures = { version = "0.4.7", optional = true }
 browser-utils = { package = "substrate-browser-utils", git = "https://github.com/paritytech/substrate", branch = "master", optional = true }
 
+[build-dependencies]
+substrate-build-script-utils = { git = "https://github.com/paritytech/substrate", branch = "master" }
+
 [features]
-default = [ "wasmtime", "rocksdb", "cli" ]
+default = [ "wasmtime", "db", "cli", "service-old" ]
 wasmtime = [ "sc-cli/wasmtime" ]
-rocksdb = [ "service/rocksdb" ]
+db = [ "service/db" ]
 cli = [
 	"tokio",
 	"sc-cli",
+	"sc-service",
 	"frame-benchmarking-cli",
-	"service/full-node",
 ]
+service-old = [ "service/full-node" ]
 browser = [
 	"wasm-bindgen",
 	"wasm-bindgen-futures",
 	"browser-utils",
+	"service",
 ]
-runtime-benchmarks = ["service/runtime-benchmarks"]
+runtime-benchmarks = [ "service/runtime-benchmarks" ]
+service-rewr = [ "service-new/full-node" ]

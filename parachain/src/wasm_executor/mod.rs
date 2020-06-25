@@ -21,14 +21,15 @@
 //! a WASM VM for re-execution of a parachain candidate.
 
 use std::any::{TypeId, Any};
-use crate::{ValidationParams, ValidationResult, UpwardMessage};
+use crate::primitives::{ValidationParams, ValidationResult, UpwardMessage};
 use codec::{Decode, Encode};
-use sp_core::storage::{ChildStorageKey, ChildInfo};
+use sp_core::storage::ChildInfo;
 use sp_core::traits::CallInWasm;
 use sp_wasm_interface::HostFunctions as _;
+use sp_externalities::Extensions;
 
-#[cfg(not(target_os = "unknown"))]
-pub use validation_host::{run_worker, EXECUTION_TIMEOUT_SEC};
+#[cfg(not(any(target_os = "android", target_os = "unknown")))]
+pub use validation_host::{run_worker, ValidationPool, EXECUTION_TIMEOUT_SEC};
 
 mod validation_host;
 
@@ -48,16 +49,37 @@ impl ParachainExt {
 	}
 }
 
+/// A stub validation-pool defined when compiling for Android or WASM.
+#[cfg(any(target_os = "android", target_os = "unknown"))]
+#[derive(Clone)]
+pub struct ValidationPool {
+	_inner: (), // private field means not publicly-instantiable
+}
+
+#[cfg(any(target_os = "android", target_os = "unknown"))]
+impl ValidationPool {
+	/// Create a new `ValidationPool`.
+	pub fn new() -> Self {
+		ValidationPool { _inner: () }
+	}
+}
+
+/// A stub function defined when compiling for Android or WASM.
+#[cfg(any(target_os = "android", target_os = "unknown"))]
+pub fn run_worker(_: &str) -> Result<(), String> {
+	Err("Cannot run validation worker on this platform".to_string())
+}
+
 /// WASM code execution mode.
 ///
 /// > Note: When compiling for WASM, the `Remote` variants are not available.
-pub enum ExecutionMode {
+pub enum ExecutionMode<'a> {
 	/// Execute in-process. The execution can not be interrupted or aborted.
 	Local,
 	/// Remote execution in a spawned process.
-	Remote,
+	Remote(&'a ValidationPool),
 	/// Remote execution in a spawned test runner.
-	RemoteTest,
+	RemoteTest(&'a ValidationPool),
 }
 
 /// Error type for the wasm executor
@@ -85,7 +107,7 @@ pub enum Error {
 	#[display(fmt = "WASM worker error: {}", _0)]
 	External(String),
 	#[display(fmt = "Shared memory error: {}", _0)]
-	#[cfg(not(target_os = "unknown"))]
+	#[cfg(not(any(target_os = "android", target_os = "unknown")))]
 	SharedMem(shared_memory::SharedMemError),
 }
 
@@ -95,7 +117,7 @@ impl std::error::Error for Error {
 			Error::WasmExecutor(ref err) => Some(err),
 			Error::Io(ref err) => Some(err),
 			Error::System(ref err) => Some(&**err),
-			#[cfg(not(target_os = "unknown"))]
+			#[cfg(not(any(target_os = "android", target_os = "unknown")))]
 			Error::SharedMem(ref err) => Some(err),
 			_ => None,
 		}
@@ -115,27 +137,27 @@ pub fn validate_candidate<E: Externalities + 'static>(
 	validation_code: &[u8],
 	params: ValidationParams,
 	ext: E,
-	options: ExecutionMode,
+	options: ExecutionMode<'_>,
 ) -> Result<ValidationResult, Error> {
 	match options {
 		ExecutionMode::Local => {
 			validate_candidate_internal(validation_code, &params.encode(), ext)
 		},
-		#[cfg(not(target_os = "unknown"))]
-		ExecutionMode::Remote => {
-			validation_host::validate_candidate(validation_code, params, ext, false)
+		#[cfg(not(any(target_os = "android", target_os = "unknown")))]
+		ExecutionMode::Remote(pool) => {
+			pool.validate_candidate(validation_code, params, ext, false)
 		},
-		#[cfg(not(target_os = "unknown"))]
-		ExecutionMode::RemoteTest => {
-			validation_host::validate_candidate(validation_code, params, ext, true)
+		#[cfg(not(any(target_os = "android", target_os = "unknown")))]
+		ExecutionMode::RemoteTest(pool) => {
+			pool.validate_candidate(validation_code, params, ext, true)
 		},
-		#[cfg(target_os = "unknown")]
-		ExecutionMode::Remote =>
+		#[cfg(any(target_os = "android", target_os = "unknown"))]
+		ExecutionMode::Remote(pool) =>
 			Err(Error::System(Box::<dyn std::error::Error + Send + Sync>::from(
 				"Remote validator not available".to_string()
 			) as Box<_>)),
-		#[cfg(target_os = "unknown")]
-		ExecutionMode::RemoteTest =>
+		#[cfg(any(target_os = "android", target_os = "unknown"))]
+		ExecutionMode::RemoteTest(pool) =>
 			Err(Error::System(Box::<dyn std::error::Error + Send + Sync>::from(
 				"Remote validator not available".to_string()
 			) as Box<_>)),
@@ -156,14 +178,17 @@ pub fn validate_candidate_internal<E: Externalities + 'static>(
 	encoded_call_data: &[u8],
 	externalities: E,
 ) -> Result<ValidationResult, Error> {
-	let mut ext = ValidationExternalities(ParachainExt::new(externalities));
+	let mut extensions = Extensions::new();
+	extensions.register(ParachainExt::new(externalities));
+	extensions.register(sp_core::traits::TaskExecutorExt(sp_core::tasks::executor()));
+
+	let mut ext = ValidationExternalities(extensions);
 
 	let executor = sc_executor::WasmExecutor::new(
 		sc_executor::WasmExecutionMethod::Interpreted,
 		// TODO: Make sure we don't use more than 1GB: https://github.com/paritytech/polkadot/issues/699
 		Some(1024),
 		HostFunctions::host_functions(),
-		false,
 		8
 	);
 	let res = executor.call_in_wasm(
@@ -172,6 +197,7 @@ pub fn validate_candidate_internal<E: Externalities + 'static>(
 		"validate_block",
 		encoded_call_data,
 		&mut ext,
+		sp_core::traits::MissingHostFunctions::Allow,
 	)?;
 
 	ValidationResult::decode(&mut &res[..]).map_err(|_| Error::BadReturn.into())
@@ -179,7 +205,7 @@ pub fn validate_candidate_internal<E: Externalities + 'static>(
 
 /// The validation externalities that will panic on any storage related access. They just provide
 /// access to the parachain extension.
-struct ValidationExternalities(ParachainExt);
+struct ValidationExternalities(Extensions);
 
 impl sp_externalities::Externalities for ValidationExternalities {
 	fn storage(&self, _: &[u8]) -> Option<Vec<u8>> {
@@ -190,15 +216,15 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("storage_hash: unsupported feature for parachain validation")
 	}
 
-	fn child_storage_hash(&self, _: ChildStorageKey, _: ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
+	fn child_storage_hash(&self, _: &ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
 		panic!("child_storage_hash: unsupported feature for parachain validation")
 	}
 
-	fn child_storage(&self, _: ChildStorageKey, _: ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
+	fn child_storage(&self, _: &ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
 		panic!("child_storage: unsupported feature for parachain validation")
 	}
 
-	fn kill_child_storage(&mut self, _: ChildStorageKey, _: ChildInfo) {
+	fn kill_child_storage(&mut self, _: &ChildInfo) {
 		panic!("kill_child_storage: unsupported feature for parachain validation")
 	}
 
@@ -206,7 +232,7 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("clear_prefix: unsupported feature for parachain validation")
 	}
 
-	fn clear_child_prefix(&mut self, _: ChildStorageKey, _: ChildInfo, _: &[u8]) {
+	fn clear_child_prefix(&mut self, _: &ChildInfo, _: &[u8]) {
 		panic!("clear_child_prefix: unsupported feature for parachain validation")
 	}
 
@@ -214,7 +240,7 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("place_storage: unsupported feature for parachain validation")
 	}
 
-	fn place_child_storage(&mut self, _: ChildStorageKey, _: ChildInfo, _: Vec<u8>, _: Option<Vec<u8>>) {
+	fn place_child_storage(&mut self, _: &ChildInfo, _: Vec<u8>, _: Option<Vec<u8>>) {
 		panic!("place_child_storage: unsupported feature for parachain validation")
 	}
 
@@ -226,7 +252,7 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("storage_root: unsupported feature for parachain validation")
 	}
 
-	fn child_storage_root(&mut self, _: ChildStorageKey) -> Vec<u8> {
+	fn child_storage_root(&mut self, _: &ChildInfo) -> Vec<u8> {
 		panic!("child_storage_root: unsupported feature for parachain validation")
 	}
 
@@ -234,12 +260,20 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("storage_changes_root: unsupported feature for parachain validation")
 	}
 
-	fn next_child_storage_key(&self, _: ChildStorageKey, _: ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
+	fn next_child_storage_key(&self, _: &ChildInfo, _: &[u8]) -> Option<Vec<u8>> {
 		panic!("next_child_storage_key: unsupported feature for parachain validation")
 	}
 
 	fn next_storage_key(&self, _: &[u8]) -> Option<Vec<u8>> {
 		panic!("next_storage_key: unsupported feature for parachain validation")
+	}
+
+	fn storage_append(
+		&mut self,
+		_key: Vec<u8>,
+		_value: Vec<u8>,
+	) {
+		panic!("storage_append: unsupported feature for parachain validation")
 	}
 
 	fn wipe(&mut self) {
@@ -249,14 +283,32 @@ impl sp_externalities::Externalities for ValidationExternalities {
 	fn commit(&mut self) {
 		panic!("commit: unsupported feature for parachain validation")
 	}
+
+	fn set_offchain_storage(&mut self, _: &[u8], _: std::option::Option<&[u8]>) {
+		panic!("set_offchain_storage: unsupported feature for parachain validation")
+	}
 }
 
 impl sp_externalities::ExtensionStore for ValidationExternalities {
 	fn extension_by_type_id(&mut self, type_id: TypeId) -> Option<&mut dyn Any> {
-		if type_id == TypeId::of::<ParachainExt>() {
-			Some(&mut self.0)
-		} else {
-			None
+		self.0.get_mut(type_id)
+	}
+
+	fn register_extension_with_type_id(
+		&mut self,
+		type_id: TypeId,
+		extension: Box<dyn sp_externalities::Extension>,
+	) -> Result<(), sp_externalities::Error> {
+		self.0.register_with_type_id(type_id, extension)
+	}
+
+	fn deregister_extension_by_type_id(
+		&mut self,
+		type_id: TypeId,
+	) -> Result<(), sp_externalities::Error> {
+		match self.0.deregister(type_id) {
+			Some(_) => Ok(()),
+			None => Err(sp_externalities::Error::ExtensionIsNotRegistered(type_id))
 		}
 	}
 }

@@ -27,7 +27,15 @@ use super::*;
 
 fn prepare_good_block() -> (TestClient, Hash, u64, PeerId, IncomingBlock<Block>) {
 	let mut client = polkadot_test_runtime_client::new();
-	let block = client.new_block(Default::default()).unwrap().build().unwrap().block;
+	let mut builder = client.new_block(Default::default()).unwrap();
+
+	let extrinsics = polkadot_test_runtime_client::needed_extrinsics(vec![]);
+
+	for extrinsic in &extrinsics {
+		builder.push(extrinsic.clone()).unwrap();
+	}
+
+	let block = builder.build().unwrap().block;
 	client.import(BlockOrigin::File, block).unwrap();
 
 	let (hash, number) = (client.block_hash(1).unwrap().unwrap(), 1);
@@ -37,7 +45,7 @@ fn prepare_good_block() -> (TestClient, Hash, u64, PeerId, IncomingBlock<Block>)
 	(client, hash, number, peer_id.clone(), IncomingBlock {
 		hash,
 		header,
-		body: Some(Vec::new()),
+		body: Some(extrinsics),
 		justification,
 		origin: Some(peer_id.clone()),
 		allow_missing_state: false,
@@ -80,10 +88,19 @@ fn import_single_good_block_without_header_fails() {
 
 #[test]
 fn async_import_queue_drops() {
+	let executor = sp_core::testing::SpawnBlockingExecutor::new();
 	// Perform this test multiple times since it exhibits non-deterministic behavior.
 	for _ in 0..100 {
 		let verifier = PassThroughVerifier(true);
-		let queue = BasicQueue::new(verifier, Box::new(polkadot_test_runtime_client::new()), None, None);
+
+		let queue = BasicQueue::new(
+			verifier,
+			Box::new(polkadot_test_runtime_client::new()),
+			None,
+			None,
+			&executor,
+			None
+		);
 		drop(queue);
 	}
 }

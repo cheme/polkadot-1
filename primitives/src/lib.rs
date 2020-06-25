@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Shareable Polkadot types.
+//! Polkadot types shared between the runtime and the Node-side code.
 
 #![warn(missing_docs)]
 
@@ -28,8 +28,7 @@ pub mod parachain;
 pub use parity_scale_codec::Compact;
 
 /// An index to a block.
-/// 32-bits will allow for 136 years of blocks assuming 1 block per second.
-pub type BlockNumber = u32;
+pub type BlockNumber = polkadot_parachain::primitives::RelayChainBlockNumber;
 
 /// An instant or duration in time.
 pub type Moment = u64;
@@ -80,16 +79,47 @@ pub use runtime_primitives::OpaqueExtrinsic as UncheckedExtrinsic;
 /// Custom validity errors used in Polkadot while validating transactions.
 #[repr(u8)]
 pub enum ValidityError {
-	/// The ethereum signature is invalid.
+	/// The Ethereum signature is invalid.
 	InvalidEthereumSignature = 0,
 	/// The signer has no claim.
 	SignerHasNoClaim = 1,
 	/// No permission to execute the call.
 	NoPermission = 2,
+	/// An invalid statement was made for a claim.
+	InvalidStatement = 3,
 }
 
 impl From<ValidityError> for u8 {
 	fn from(err: ValidityError) -> Self {
 		err as u8
+	}
+}
+
+/// App-specific crypto used for reporting equivocation/misbehavior in BABE,
+/// GRANDPA and Parachains, described in the white paper as the fisherman role.
+/// Any rewards for misbehavior reporting will be paid out to this account.
+pub mod fisherman {
+	use super::{Signature, Verify};
+	use primitives::crypto::KeyTypeId;
+
+	/// Key type for the reporting module. Used for reporting BABE, GRANDPA
+	/// and Parachain equivocations.
+	pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"fish");
+
+	mod app {
+		use application_crypto::{app_crypto, sr25519};
+		app_crypto!(sr25519, super::KEY_TYPE);
+	}
+
+	/// Identity of the equivocation/misbehavior reporter.
+	pub type FishermanId = app::Public;
+
+	/// An `AppCrypto` type to allow submitting signed transactions using the fisherman
+	/// application key as signer.
+	pub struct FishermanAppCrypto;
+	impl system::offchain::AppCrypto<<Signature as Verify>::Signer, Signature> for FishermanAppCrypto {
+		type RuntimeAppPublic = FishermanId;
+		type GenericSignature = primitives::sr25519::Signature;
+		type GenericPublic = primitives::sr25519::Public;
 	}
 }

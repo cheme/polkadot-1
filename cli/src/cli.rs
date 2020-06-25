@@ -19,7 +19,7 @@
 use structopt::StructOpt;
 
 #[allow(missing_docs)]
-#[derive(Debug, StructOpt, Clone)]
+#[derive(Debug, StructOpt)]
 pub enum Subcommand {
 	#[allow(missing_docs)]
 	#[structopt(flatten)]
@@ -38,14 +38,14 @@ pub enum Subcommand {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, StructOpt, Clone)]
+#[derive(Debug, StructOpt)]
 pub struct ValidationWorkerCommand {
 	#[allow(missing_docs)]
 	pub mem_id: String,
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, StructOpt, Clone)]
+#[derive(Debug, StructOpt)]
 pub struct RunCmd {
 	#[allow(missing_docs)]
 	#[structopt(flatten)]
@@ -54,25 +54,20 @@ pub struct RunCmd {
 	/// Force using Kusama native runtime.
 	#[structopt(long = "force-kusama")]
 	pub force_kusama: bool,
-}
 
-#[allow(missing_docs)]
-#[derive(Debug, StructOpt, Clone)]
-#[structopt(settings = &[
-	structopt::clap::AppSettings::GlobalVersion,
-	structopt::clap::AppSettings::ArgsNegateSubcommands,
-	structopt::clap::AppSettings::SubcommandsNegateReqs,
-])]
-pub struct Cli {
-	#[allow(missing_docs)]
-	#[structopt(subcommand)]
-	pub subcommand: Option<Subcommand>,
+	/// Force using Westend native runtime.
+	#[structopt(long = "force-westend")]
+	pub force_westend: bool,
 
-	#[allow(missing_docs)]
-	#[structopt(flatten)]
-	pub run: RunCmd,
-
-	#[allow(missing_docs)]
+	/// Enable the authority discovery module.
+	///
+	/// (1) As a validator node: Make oneself discoverable by publishing either
+	///     ones own network addresses, or the ones of ones sentry nodes
+	///     (configured via the `sentry-nodes` flag).
+	///
+	/// (2) As a validator or sentry node: Discover addresses of validators or
+	///     addresses of their sentry nodes and maintain a permanent connection
+	///     to a subset.
 	#[structopt(long = "enable-authority-discovery")]
 	pub authority_discovery_enabled: bool,
 
@@ -84,4 +79,16 @@ pub struct Cli {
 	/// elapsed (i.e. until a block at height `pause_block + delay` is imported).
 	#[structopt(long = "grandpa-pause", number_of_values(2))]
 	pub grandpa_pause: Vec<u32>,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, StructOpt)]
+pub struct Cli {
+	#[allow(missing_docs)]
+	#[structopt(subcommand)]
+	pub subcommand: Option<Subcommand>,
+
+	#[allow(missing_docs)]
+	#[structopt(flatten)]
+	pub run: RunCmd,
 }

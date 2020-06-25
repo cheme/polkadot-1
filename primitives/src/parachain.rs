@@ -14,13 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Polkadot parachain types.
+//! Primitives which are necessary for parachain execution from a relay-chain
+//! perspective.
 
 use sp_std::prelude::*;
 use sp_std::cmp::Ordering;
 use parity_scale_codec::{Encode, Decode};
 use bitvec::vec::BitVec;
-use super::{Hash, Balance};
+use super::{Hash, Balance, BlockNumber};
 
 #[cfg(feature = "std")]
 use serde::{Serialize, Deserialize};
@@ -28,12 +29,13 @@ use serde::{Serialize, Deserialize};
 #[cfg(feature = "std")]
 use primitives::bytes;
 use primitives::RuntimeDebug;
-use runtime_primitives::traits::{Block as BlockT};
+use runtime_primitives::traits::Block as BlockT;
 use inherents::InherentIdentifier;
 use application_crypto::KeyTypeId;
 
-pub use polkadot_parachain::{
-	Id, ParachainDispatchOrigin, LOWEST_USER_ID, UpwardMessage,
+pub use polkadot_parachain::primitives::{
+	Id, ParachainDispatchOrigin, LOWEST_USER_ID, UpwardMessage, HeadData, BlockData,
+	ValidationCode,
 };
 
 /// The key type ID for a collator key.
@@ -75,9 +77,10 @@ pub type ValidatorId = validator_app::Public;
 /// Index of the validator is used as a lightweight replacement of the `ValidatorId` when appropriate.
 pub type ValidatorIndex = u32;
 
-/// A Parachain validator keypair.
-#[cfg(feature = "std")]
-pub type ValidatorPair = validator_app::Pair;
+application_crypto::with_pair! {
+	/// A Parachain validator keypair.
+	pub type ValidatorPair = validator_app::Pair;
+}
 
 /// Signature with which parachain validators sign blocks.
 ///
@@ -144,6 +147,11 @@ pub trait SwapAux {
 	fn on_swap(one: Id, other: Id) -> Result<(), &'static str>;
 }
 
+impl SwapAux for () {
+	fn ensure_can_swap(_: Id, _: Id) -> Result<(), &'static str> { Err("Swapping disabled") }
+	fn on_swap(_: Id, _: Id) -> Result<(), &'static str> { Err("Swapping disabled") }
+}
+
 /// Identifier for a chain, either one of a number of parachains or the relay chain.
 #[derive(Copy, Clone, PartialEq, Encode, Decode)]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -173,6 +181,8 @@ pub struct GlobalValidationSchedule {
 	pub max_code_size: u32,
 	/// The maximum head-data size permitted, in bytes.
 	pub max_head_data_size: u32,
+	/// The relay-chain block number this is in the context of.
+	pub block_number: BlockNumber,
 }
 
 /// Extra data that is needed along with the other fields in a `CandidateReceipt`
@@ -184,6 +194,18 @@ pub struct LocalValidationData {
 	pub parent_head: HeadData,
 	/// The balance of the parachain at the moment of validation.
 	pub balance: Balance,
+	/// Whether the parachain is allowed to upgrade its validation code.
+	///
+	/// This is `Some` if so, and contains the number of the minimum relay-chain
+	/// height at which the upgrade will be applied, if an upgrade is signaled
+	/// now.
+	///
+	/// A parachain should enact its side of the upgrade at the end of the first
+	/// parablock executing in the context of a relay-chain block with at least this
+	/// height. This may be equal to the current perceived relay-chain block height, in
+	/// which case the code upgrade should be applied at the end of the signaling
+	/// block.
+	pub code_upgrade_allowed: Option<BlockNumber>,
 }
 
 /// Commitments made in a `CandidateReceipt`. Many of these are outputs of validation.
@@ -196,6 +218,8 @@ pub struct CandidateCommitments {
 	pub upward_messages: Vec<UpwardMessage>,
 	/// The root of a block's erasure encoding Merkle tree.
 	pub erasure_root: Hash,
+	/// New validation code.
+	pub new_validation_code: Option<ValidationCode>,
 }
 
 /// Get a collator signature payload on a relay-parent, block-data combo.
@@ -531,13 +555,6 @@ pub struct AvailableData {
 	// In the future, outgoing messages as well.
 }
 
-/// Parachain block data.
-///
-/// Contains everything required to validate para-block, may contain block and witness data.
-#[derive(PartialEq, Eq, Clone, Encode, Decode)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Debug))]
-pub struct BlockData(#[cfg_attr(feature = "std", serde(with="bytes"))] pub Vec<u8>);
-
 /// A chunk of erasure-encoded block data.
 #[derive(PartialEq, Eq, Clone, Encode, Decode, Default)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize, Debug))]
@@ -550,28 +567,10 @@ pub struct ErasureChunk {
 	pub proof: Vec<Vec<u8>>,
 }
 
-impl BlockData {
-	/// Compute hash of block data.
-	#[cfg(feature = "std")]
-	pub fn hash(&self) -> Hash {
-		use runtime_primitives::traits::{BlakeTwo256, Hash};
-		BlakeTwo256::hash(&self.0[..])
-	}
-}
 /// Parachain header raw bytes wrapper type.
 #[derive(PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize, Debug))]
 pub struct Header(#[cfg_attr(feature = "std", serde(with="bytes"))] pub Vec<u8>);
-
-/// Parachain head data included in the chain.
-#[derive(PartialEq, Eq, Clone, PartialOrd, Ord, Encode, Decode)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Debug, Default))]
-pub struct HeadData(#[cfg_attr(feature = "std", serde(with="bytes"))] pub Vec<u8>);
-
-/// Parachain validation code.
-#[derive(PartialEq, Eq)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Debug))]
-pub struct ValidationCode(#[cfg_attr(feature = "std", serde(with="bytes"))] pub Vec<u8>);
 
 /// Activity bit field.
 #[derive(PartialEq, Eq, Clone, Default, Encode, Decode)]
@@ -592,6 +591,15 @@ pub enum Statement {
 	/// State that a parachain candidate is invalid.
 	#[codec(index = "3")]
 	Invalid(Hash),
+}
+
+impl Statement {
+	/// Produce a payload on this statement that is used for signing.
+	///
+	/// It includes the context provided.
+	pub fn signing_payload(&self, context: &SigningContext) -> Vec<u8> {
+		(self, context).encode()
+	}
 }
 
 /// An either implicit or explicit attestation to the validity of a parachain
@@ -647,19 +655,108 @@ impl AttestedCandidate {
 pub struct FeeSchedule {
 	/// The base fee charged for all messages.
 	pub base: Balance,
-	/// The per-byte fee charged on top of that.
+	/// The per-byte fee for messages charged on top of that.
 	pub per_byte: Balance,
 }
 
 impl FeeSchedule {
 	/// Compute the fee for a message of given size.
-	pub fn compute_fee(&self, n_bytes: usize) -> Balance {
+	pub fn compute_message_fee(&self, n_bytes: usize) -> Balance {
 		use sp_std::mem;
 		debug_assert!(mem::size_of::<Balance>() >= mem::size_of::<usize>());
 
 		let n_bytes = n_bytes as Balance;
 		self.base.saturating_add(n_bytes.saturating_mul(self.per_byte))
 	}
+}
+
+/// A bitfield concerning availability of backed candidates.
+#[derive(PartialEq, Eq, Clone, Encode, Decode)]
+#[cfg_attr(feature = "std", derive(Debug))]
+pub struct AvailabilityBitfield(pub BitVec<bitvec::order::Lsb0, u8>);
+
+impl From<BitVec<bitvec::order::Lsb0, u8>> for AvailabilityBitfield {
+	fn from(inner: BitVec<bitvec::order::Lsb0, u8>) -> Self {
+		AvailabilityBitfield(inner)
+	}
+}
+
+impl AvailabilityBitfield {
+	/// Encodes the signing payload into the given buffer.
+	pub fn encode_signing_payload_into(
+		&self,
+		signing_context: &SigningContext,
+		buf: &mut Vec<u8>,
+	) {
+		self.0.encode_to(buf);
+		signing_context.encode_to(buf);
+	}
+
+	/// Encodes the signing payload into a fresh byte-vector.
+	pub fn encode_signing_payload(
+		&self,
+		signing_context:
+		&SigningContext,
+	) -> Vec<u8> {
+		let mut v = Vec::new();
+		self.encode_signing_payload_into(signing_context, &mut v);
+		v
+	}
+}
+
+/// A bitfield signed by a particular validator about the availability of pending candidates.
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct SignedAvailabilityBitfield {
+	/// The index of the validator in the current set.
+	pub validator_index: ValidatorIndex,
+	/// The bitfield itself, with one bit per core. Only occupied cores may have the `1` bit set.
+	pub bitfield: AvailabilityBitfield,
+	/// The signature by the validator on the bitfield's signing payload. The context of the signature
+	/// should be apparent when checking the signature.
+	pub signature: ValidatorSignature,
+}
+
+/// Check a signature on an availability bitfield. Provide the bitfield, the validator who signed it,
+/// the signature, the signing context, and an optional buffer in which to encode.
+///
+/// If the buffer is provided, it is assumed to be empty.
+pub fn check_availability_bitfield_signature<H: Encode>(
+	bitfield: &AvailabilityBitfield,
+	validator: &ValidatorId,
+	signature: &ValidatorSignature,
+	signing_context: &SigningContext,
+	payload_encode_buf: Option<&mut Vec<u8>>,
+) -> Result<(),()> {
+	use runtime_primitives::traits::AppVerify;
+
+	let mut v = Vec::new();
+	let payload_encode_buf = payload_encode_buf.unwrap_or(&mut v);
+
+	bitfield.encode_signing_payload_into(signing_context, payload_encode_buf);
+
+	if signature.verify(&payload_encode_buf[..], validator) {
+		Ok(())
+	} else {
+		Err(())
+	}
+}
+
+/// A set of signed availability bitfields. Should be sorted by validator index, ascending.
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct SignedAvailabilityBitfields(pub Vec<SignedAvailabilityBitfield>);
+
+/// A backed (or backable, depending on context) candidate.
+// TODO: yes, this is roughly the same as AttestedCandidate.
+// After https://github.com/paritytech/polkadot/issues/1250
+// they should be unified to this type.
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct BackedCandidate {
+	/// The candidate referred to.
+	pub candidate: AbridgedCandidateReceipt,
+	/// The validity votes themselves, expressed as signatures.
+	pub validity_votes: Vec<ValidityAttestation>,
+	/// The indices of the validators within the group, expressed as a bitfield.
+	pub validator_indices: BitVec<bitvec::order::Lsb0, u8>,
 }
 
 sp_api::decl_runtime_apis! {
@@ -678,7 +775,7 @@ sp_api::decl_runtime_apis! {
 		/// Get the local validation data for a particular parachain.
 		fn local_validation_data(id: Id) -> Option<LocalValidationData>;
 		/// Get the given parachain's head code blob.
-		fn parachain_code(id: Id) -> Option<Vec<u8>>;
+		fn parachain_code(id: Id) -> Option<ValidationCode>;
 		/// Extract the abridged head that was set in the extrinsics.
 		fn get_heads(extrinsics: Vec<<Block as BlockT>::Extrinsic>)
 			-> Option<Vec<AbridgedCandidateReceipt>>;
