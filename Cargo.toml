@@ -4,7 +4,7 @@ path = "src/main.rs"
 
 [package]
 name = "polkadot"
-version = "0.8.10"
+version = "0.8.12"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
@@ -162,3 +162,21 @@ sp-consensus-aura = { git="https://github.com/cheme/substrate", branch="historie
 sc-network-test = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 frame-benchmarking = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 frame-benchmarking-cli = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+frame-system-benchmarking = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+pallet-multisig = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+pallet-offences-benchmarking = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+pallet-proxy = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+pallet-scheduler = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+pallet-session-benchmarking = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-consensus = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-consensus-epochs = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-light = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-basic-authorship = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-consensus-babe-rpc = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-rpc-api = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-finality-grandpa-rpc = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sc-proposer-metrics = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sp-chain-spec = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sp-rpc = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+substrate-build-script-utils = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+
