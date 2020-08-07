@@ -16,7 +16,9 @@ async function start() {
 	await init('./pkg/polkadot_cli_bg.wasm');
 	log('Successfully loaded WASM');
 	log('Fetching chain spec');
-	const chain_spec_response = await fetch("https://raw.githubusercontent.com/paritytech/polkadot/master/service/res/westend.json");
+	//const chain_spec_response = await fetch("https://raw.githubusercontent.com/paritytech/polkadot/master/service/res/westend.json");
+	//const chain_spec_response = await fetch("http://localhost:8000/polkadot.json");
+	const chain_spec_response = await fetch("http://localhost:8000/westend.json");
 	const chain_spec_text = await chain_spec_response.text();
 
 	// Build our client.
@@ -34,7 +36,7 @@ async function start() {
 	}, 20000);
 }
 
-start();
+var myWorker = new Worker('worker.js', { type: "module" });
 	</script>
   </head>
   <body style="white-space: pre"></body>
