@@ -4,14 +4,12 @@ path = "src/main.rs"
 
 [package]
 name = "polkadot"
-version = "0.8.19"
+version = "0.8.23"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
 cli = { package = "polkadot-cli", path = "cli" }
-# It looks like this is the only way to pass features to it
-collator = { package = "polkadot-collator", path = "collator" }
 futures = "0.3.4"
 service = { package = "polkadot-service", path = "service" }
 parity-util-mem = { version = "*", default-features = false, features = ["jemalloc-global"] }
@@ -23,13 +21,9 @@ tempfile = "3.1.0"
 
 [workspace]
 members = [
-	"availability-store",
 	"cli",
-	"collator",
 	"core-primitives",
 	"erasure-coding",
-	"network",
-	"network/test",
 	"primitives",
 	"runtime/common",
 	"runtime/parachains",
@@ -69,7 +63,6 @@ members = [
 
 	"parachain/test-parachains",
 	"parachain/test-parachains/adder",
-	"parachain/test-parachains/adder/collator",
 ]
 
 [badges]
@@ -84,7 +77,6 @@ runtime-benchmarks=["cli/runtime-benchmarks"]
 
 service-rewr= [
 	"cli/service-rewr",
-	"collator/service-rewr",
 ]
 
 [patch.'https://github.com/paritytech/substrate']
@@ -192,6 +184,7 @@ sc-proposer-metrics = { git="https://github.com/cheme/substrate", branch="histor
 sp-chain-spec = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 sp-rpc = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 substrate-build-script-utils = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
+sp-arithmetic = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 
 [patch.crates-io]
 trie-db = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
