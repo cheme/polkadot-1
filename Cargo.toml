@@ -193,3 +193,10 @@ sp-chain-spec = { git="https://github.com/cheme/substrate", branch="historied-st
 sp-rpc = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 substrate-build-script-utils = { git="https://github.com/cheme/substrate", branch="historied-storage-cache" }
 
+[patch.crates-io]
+trie-db = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
+memory-db = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
+hash-db = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
+trie-root = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
+trie-bench = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
+trie-standardmap = { git="https://github.com/cheme/trie", branch="key_val_indexed2" }
