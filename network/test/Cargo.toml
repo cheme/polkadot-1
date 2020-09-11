@@ -10,14 +10,14 @@ log = "0.4.8"
 parking_lot = "0.10.0"
 futures = "0.3.1"
 rand = "0.7.2"
-sc-consensus = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sc-network = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sc-service = { git = "https://github.com/paritytech/substrate", features = ["test-helpers"], branch = "rococo-branch" }
-sc-network-test = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sp-consensus = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sc-client-api = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sp-blockchain = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sp-runtime = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sp-core = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
-sc-block-builder = { git = "https://github.com/paritytech/substrate", branch = "rococo-branch" }
+sc-consensus = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sc-network = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sc-service = { git = "https://github.com/cheme/substrate", features = ["test-helpers"], branch = "rococo-branch-witness_backend" }
+sc-network-test = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sp-consensus = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sc-client-api = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sp-blockchain = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sp-runtime = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sp-core = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
+sc-block-builder = { git = "https://github.com/cheme/substrate", branch = "rococo-branch-witness_backend" }
 polkadot-test-runtime-client = { path = "../../runtime/test-runtime/client" }

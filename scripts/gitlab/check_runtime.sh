@@ -19,7 +19,7 @@ set -e # fail on any error
 #shellcheck source=lib.sh
 . "$(dirname "${0}")/lib.sh"
 
-SUBSTRATE_REPO="https://github.com/paritytech/substrate"
+SUBSTRATE_REPO="https://github.com/cheme/substrate"
 SUBSTRATE_REPO_CARGO="git\+${SUBSTRATE_REPO}"
 SUBSTRATE_VERSIONS_FILE="bin/node/runtime/src/lib.rs"
 
@@ -118,7 +118,7 @@ then
 		echo "$substrate_changes" | while read -r line; do
 			pr_id=$(echo "$line" | sed -E 's/.*#([0-9]+)\)$/\1/')
 
-			if has_label 'paritytech/substrate' "$pr_id" 'D2-breaksapi'; then
+			if has_label 'cheme/substrate' "$pr_id" 'D2-breaksapi'; then
 				boldprint "Substrate change labelled with D2-breaksapi. Labelling..."
 				github_label "D2-breaksapi"
 				exit 1

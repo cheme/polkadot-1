@@ -195,7 +195,7 @@ build-linux-release:               &build
     - sccache -s
   # only for rococo for this branch
   only:
-    - rococo-branch
+    - rococo-branch-witness_backend
 
 
 generate-impl-guide:

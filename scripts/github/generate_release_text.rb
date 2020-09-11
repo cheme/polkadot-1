@@ -44,7 +44,7 @@ substrate_cur_sha = current_cargo['package']
                     .split('#').last
 
 substrate_cl = Changelog.new(
-  'paritytech/substrate', substrate_prev_sha, substrate_cur_sha,
+  'cheme/substrate', substrate_prev_sha, substrate_cur_sha,
   token: token,
   prefix: true
 )
