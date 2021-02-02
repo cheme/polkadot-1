@@ -20,12 +20,13 @@
 //! Assuming the parameters are correct, this module provides a wrapper around
 //! a WASM VM for re-execution of a parachain candidate.
 
-use std::{any::{TypeId, Any}, path::PathBuf, sync::Arc};
-use crate::primitives::{ValidationParams, ValidationResult, ValidationCode};
+use std::{any::{TypeId, Any}, path::PathBuf};
+use crate::primitives::{ValidationParams, ValidationResult};
 use parity_scale_codec::{Decode, Encode};
 use sp_core::{storage::{ChildInfo, TrackedStorageKey}, traits::{CallInWasm, SpawnNamed}};
 use sp_externalities::Extensions;
 use sp_wasm_interface::HostFunctions as _;
+use crate::{Validation, ValidationExt};
 
 #[cfg(not(any(target_os = "android", target_os = "unknown")))]
 pub use validation_host::{run_worker, ValidationPool, EXECUTION_TIMEOUT_SEC, WORKER_ARGS};
@@ -205,7 +206,7 @@ pub fn validate_candidate_internal(
 	validation_ext: impl Validation,
 ) -> Result<ValidationResult, ValidationError> {
 	let mut host_functions = HostFunctions::host_functions();
-	host_functions.extend(validation::HostFunctions::host_functions().into_iter());
+	host_functions.extend(crate::validation::HostFunctions::host_functions().into_iter());
 
 	let executor = sc_executor::WasmExecutor::new(
 		#[cfg(all(feature = "wasmtime", not(any(target_os = "android", target_os = "unknown"))))]
