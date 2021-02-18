@@ -42,6 +42,15 @@ pub enum Subcommand {
 	/// Revert the chain to a previous state.
 	Revert(sc_cli::RevertCmd),
 
+	/// Manage snapshot db configuration.
+	SnapshotManage(sc_cli::SnapshotManageCmd),
+
+	/// Import a snapshot.
+	SnapshotImport(sc_cli::SnapshotImportCmd),
+
+	/// Export a snapshot.
+	SnapshotExport(sc_cli::SnapshotExportCmd),
+
 	#[allow(missing_docs)]
 	#[structopt(name = "validation-worker", setting = structopt::clap::AppSettings::Hidden)]
 	ValidationWorker(ValidationWorkerCommand),

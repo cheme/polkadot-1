@@ -248,6 +248,27 @@ pub fn run() -> Result<()> {
 				Ok((cmd.run(client, backend).map_err(Error::SubstrateCli),task_manager))
 			})?)
 		},
+		Some(Subcommand::SnapshotManage(cmd)) => {
+			let runner = cli.create_runner(cmd)?;
+			Ok(runner.async_run(|mut config| {
+				let (_, backend, _, task_manager) = service::new_chain_ops(&mut config, None)?;
+				Ok((cmd.run(backend, config.database).map_err(Error::SubstrateCli),task_manager))
+			})?)
+		},
+		Some(Subcommand::SnapshotImport(cmd)) => {
+			let runner = cli.create_runner(cmd)?;
+			Ok(runner.async_run(|mut config| {
+				let (_, backend, _, task_manager) = service::new_chain_ops(&mut config, None)?;
+				Ok((cmd.run(backend, config.database).map_err(Error::SubstrateCli),task_manager))
+			})?)
+		},
+		Some(Subcommand::SnapshotExport(cmd)) => {
+			let runner = cli.create_runner(cmd)?;
+			Ok(runner.async_run(|mut config| {
+				let (_, backend, _, task_manager) = service::new_chain_ops(&mut config, None)?;
+				Ok((cmd.run(backend, config.database).map_err(Error::SubstrateCli),task_manager))
+			})?)
+		},
 		Some(Subcommand::ValidationWorker(cmd)) => {
 			let mut builder = sc_cli::LoggerBuilder::new("");
 			builder.with_colors(false);
