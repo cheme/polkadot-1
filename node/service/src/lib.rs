@@ -29,6 +29,7 @@ use {
 	tracing::info,
 	polkadot_node_core_av_store::Config as AvailabilityConfig,
 	polkadot_node_core_av_store::Error as AvailabilityError,
+	polkadot_node_core_approval_voting::Config as ApprovalVotingConfig,
 	polkadot_node_core_proposer::ProposerFactory,
 	polkadot_overseer::{AllSubsystems, BlockInfo, Overseer, OverseerHandler},
 	polkadot_primitives::v1::ParachainHost,
@@ -57,7 +58,7 @@ use telemetry::{TelemetryConnectionNotifier, TelemetrySpan};
 
 pub use self::client::{AbstractClient, Client, ClientHandle, ExecuteWithClient, RuntimeApiCollection};
 pub use chain_spec::{PolkadotChainSpec, KusamaChainSpec, WestendChainSpec, RococoChainSpec};
-pub use consensus_common::{Proposal, SelectChain, BlockImport, RecordProof, block_validation::Chain};
+pub use consensus_common::{Proposal, SelectChain, BlockImport, block_validation::Chain};
 pub use polkadot_parachain::wasm_executor::IsolationStrategy;
 pub use polkadot_primitives::v1::{Block, BlockId, CollatorId, Hash, Id as ParaId};
 pub use sc_client_api::{Backend, ExecutionStrategy, CallExecutor};
@@ -137,6 +138,10 @@ pub enum Error {
 
 	#[error("Authorities require the real overseer implementation")]
 	AuthoritiesRequireRealOverseer,
+
+	#[cfg(feature = "full-node")]
+	#[error("Creating a custom database is required for validators")]
+	DatabasePathRequired,
 }
 
 /// Can be called for a `Configuration` to check if it is a configuration for the `Kusama` network.
@@ -281,7 +286,7 @@ fn new_partial<RuntimeApi, Executor>(config: &mut Configuration, jaeger_agent: O
 		client.clone(),
 		select_chain.clone(),
 		inherent_data_providers.clone(),
-		&task_manager.spawn_handle(),
+		&task_manager.spawn_essential_handle(),
 		config.prometheus_registry(),
 		consensus_common::CanAuthorWithNativeVersion::new(client.executor().clone()),
 	)?;
@@ -358,7 +363,7 @@ fn real_overseer<Spawner, RuntimeClient>(
 	spawner: Spawner,
 	_: IsCollator,
 	_: IsolationStrategy,
-	_: u64,
+	_: ApprovalVotingConfig,
 ) -> Result<(Overseer<Spawner>, OverseerHandler), Error>
 where
 	RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,
@@ -386,7 +391,7 @@ fn real_overseer<Spawner, RuntimeClient>(
 	spawner: Spawner,
 	is_collator: IsCollator,
 	isolation_strategy: IsolationStrategy,
-	slot_duration: u64,
+	approval_voting_config: ApprovalVotingConfig,
 ) -> Result<(Overseer<Spawner>, OverseerHandler), Error>
 where
 	RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,
@@ -413,13 +418,14 @@ where
 	use polkadot_availability_recovery::AvailabilityRecoverySubsystem;
 	use polkadot_approval_distribution::ApprovalDistribution as ApprovalDistributionSubsystem;
 	use polkadot_node_core_approval_voting::ApprovalVotingSubsystem;
+	use polkadot_gossip_support::GossipSupport as GossipSupportSubsystem;
 
 	let all_subsystems = AllSubsystems {
 		availability_distribution: AvailabilityDistributionSubsystem::new(
 			keystore.clone(),
 			Metrics::register(registry)?,
 		),
-		availability_recovery: AvailabilityRecoverySubsystem::new(
+		availability_recovery: AvailabilityRecoverySubsystem::with_chunks_only(
 		),
 		availability_store: AvailabilityStoreSubsystem::new_on_disk(
 			availability_config,
@@ -488,11 +494,11 @@ where
 		approval_distribution: ApprovalDistributionSubsystem::new(
 			Metrics::register(registry)?,
 		),
-		approval_voting: ApprovalVotingSubsystem::new(
+		approval_voting: ApprovalVotingSubsystem::with_config(
+			approval_voting_config,
 			keystore.clone(),
-			slot_duration,
-			runtime_client.clone(),
-		),
+		)?,
+		gossip_support: GossipSupportSubsystem::new(),
 	};
 
 	Overseer::new(
@@ -566,6 +572,9 @@ pub fn new_full<RuntimeApi, Executor>(
 		RuntimeApiCollection<StateBackend = sc_client_api::StateBackendFor<FullBackend, Block>>,
 		Executor: NativeExecutionDispatch + 'static,
 {
+	let telemetry_span = TelemetrySpan::new();
+	let _telemetry_span_entered = telemetry_span.enter();
+
 	let role = config.role.clone();
 	let force_authoring = config.force_authoring;
 	let backoff_authoring_blocks =
@@ -617,7 +626,7 @@ pub fn new_full<RuntimeApi, Executor>(
 	adjust_yamux(&mut config.network);
 
 	config.network.request_response_protocols.push(sc_finality_grandpa_warp_sync::request_response_config_for_chain(
-		&config, task_manager.spawn_handle(), backend.clone(),
+		&config, task_manager.spawn_handle(), backend.clone(), import_setup.1.shared_authority_set().clone(),
 	));
 	#[cfg(feature = "real-overseer")]
 	fn register_request_response(config: &mut sc_network::config::NetworkConfiguration) -> RequestMultiplexer {
@@ -648,8 +657,13 @@ pub fn new_full<RuntimeApi, Executor>(
 
 	let availability_config = config.database.clone().try_into().map_err(Error::Availability)?;
 
-	let telemetry_span = TelemetrySpan::new();
-	let _telemetry_span_entered = telemetry_span.enter();
+	let approval_voting_config = ApprovalVotingConfig {
+		path: config.database.path()
+			.ok_or(Error::DatabasePathRequired)?
+			.join("parachains").join("approval-voting"),
+		slot_duration_millis: slot_duration,
+		cache_size: None, // default is fine.
+	};
 
 	let (rpc_handlers, telemetry_connection_notifier) = service::spawn_tasks(service::SpawnTasksParams {
 		config,
@@ -741,7 +755,7 @@ pub fn new_full<RuntimeApi, Executor>(
 			spawner,
 			is_collator,
 			isolation_strategy,
-			slot_duration,
+			approval_voting_config,
 		)?;
 		let overseer_handler_clone = overseer_handler.clone();
 
@@ -828,6 +842,7 @@ pub fn new_full<RuntimeApi, Executor>(
 		// given delay.
 		let builder = grandpa::VotingRulesBuilder::default();
 
+		#[cfg(feature = "real-overseer")]
 		let builder = if let Some(ref overseer) = overseer_handler {
 			builder.add(grandpa_support::ApprovalCheckingDiagnostic::new(
 				overseer.clone(),
@@ -934,7 +949,7 @@ fn new_light<Runtime, Dispatch>(mut config: Configuration) -> Result<(
 		client.clone(),
 		select_chain.clone(),
 		inherent_data_providers.clone(),
-		&task_manager.spawn_handle(),
+		&task_manager.spawn_essential_handle(),
 		config.prometheus_registry(),
 		consensus_common::NeverCanAuthor,
 	)?;
