@@ -139,6 +139,8 @@ sp-trie = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sp-keyring = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-timestamp = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 frame-system = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+frame-try-runtime = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+frame-system-benchmarking = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-staking = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 frame-support = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-session = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
@@ -162,6 +164,14 @@ pallet-identity = { git="https://github.com/cheme/substrate", branch="snapshot_d
 pallet-grandpa = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 frame-executive = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-elections-phragmen = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+pallet-election-provider-multi-phase = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sp-election-providers = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+remote-externalities = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sc-informant = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sc-finality-grandpa-warp-sync = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sp-database = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+substrate-browser-utils = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+try-runtime-cli = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-democracy = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-collective = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-transaction-payment-rpc = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
@@ -215,6 +225,7 @@ pallet-proxy = { git="https://github.com/cheme/substrate", branch="snapshot_draf
 pallet-vesting = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-basic-authorship = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sp-consensus = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sp-consensus-slots = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-consensus = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-consensus-babe = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-consensus-babe-rpc = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
@@ -236,6 +247,10 @@ substrate-test-runtime = { git="https://github.com/cheme/substrate", branch="sna
 substrate-test-runtime-client = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 substrate-test-utils = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 substrate-wasm-builder = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sp-npos-elections = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+sp-npos-elections-compact = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+pallet-offences-benchmarking = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+pallet-session-benchmarking = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 
 [patch.crates-io]
 kvdb-rocksdb = { git="https://github.com/cheme/parity-common", branch="historied-db-cache" }

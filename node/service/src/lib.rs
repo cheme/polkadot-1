@@ -269,6 +269,7 @@ fn new_partial<RuntimeApi, Executor>(config: &mut Configuration, jaeger_agent: O
 			select_chain.clone(),
 			grandpa_hard_forks,
 		)?;
+	backend.register_sync(grandpa::sync_backend(grandpa_link.shared_authority_set().clone(), client.clone()));
 
 	let justification_import = grandpa_block_import.clone();
 
@@ -303,6 +304,8 @@ fn new_partial<RuntimeApi, Executor>(config: &mut Configuration, jaeger_agent: O
 	let rpc_setup = shared_voter_state.clone();
 
 	let shared_epoch_changes = babe_link.epoch_changes().clone();
+	backend.register_sync(babe::sync_backend(shared_epoch_changes.clone(), client.clone()));
+
 	let slot_duration = babe_config.slot_duration();
 
 	let rpc_extensions_builder = {
