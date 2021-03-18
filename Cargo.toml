@@ -165,7 +165,9 @@ pallet-grandpa = { git="https://github.com/cheme/substrate", branch="snapshot_dr
 frame-executive = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-elections-phragmen = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 pallet-election-provider-multi-phase = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
-sp-election-providers = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+frame-election-provider-support = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+frame-metadata = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
+frame-support-test = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 remote-externalities = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-informant = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
 sc-finality-grandpa-warp-sync = { git="https://github.com/cheme/substrate", branch="snapshot_draft" }
