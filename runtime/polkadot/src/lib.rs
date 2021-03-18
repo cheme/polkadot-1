@@ -92,7 +92,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	spec_name: create_runtime_str!("polkadot"),
 	impl_name: create_runtime_str!("parity-polkadot"),
 	authoring_version: 0,
-	spec_version: 29,
+	spec_version: 30,
 	impl_version: 0,
 	#[cfg(not(feature = "disable-runtime-api"))]
 	apis: RUNTIME_API_VERSIONS,
@@ -100,6 +100,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	apis: version::create_apis_vec![[]],
 	transaction_version: 6,
 };
+
+/// The BABE epoch configuration at genesis.
+pub const BABE_GENESIS_EPOCH_CONFIG: babe_primitives::BabeEpochConfiguration =
+	babe_primitives::BabeEpochConfiguration {
+		c: PRIMARY_PROBABILITY,
+		allowed_slots: babe_primitives::AllowedSlots::PrimaryAndSecondaryVRFSlots
+	};
 
 /// Native version.
 #[cfg(any(feature = "std", test))]
@@ -319,7 +326,7 @@ parameter_types! {
 	pub const Fallback: pallet_election_provider_multi_phase::FallbackStrategy =
 		pallet_election_provider_multi_phase::FallbackStrategy::Nothing;
 
-	pub SolutionImprovementThreshold: Perbill = Perbill::from_rational_approximation(1u32, 10_000);
+	pub SolutionImprovementThreshold: Perbill = Perbill::from_rational(1u32, 10_000);
 
 	// miner configs
 	pub MultiPhaseUnsignedPriority: TransactionPriority = StakingUnsignedPriority::get() - 1u64;
@@ -370,7 +377,7 @@ parameter_types! {
 	// last 15 minutes of the last session will be for election.
 	pub const ElectionLookahead: BlockNumber = EPOCH_DURATION_IN_BLOCKS / 16;
 	pub const MaxIterations: u32 = 10;
-	pub MinSolutionScoreBump: Perbill = Perbill::from_rational_approximation(5u32, 10_000);
+	pub MinSolutionScoreBump: Perbill = Perbill::from_rational(5u32, 10_000);
 }
 
 type SlashCancelOrigin = EnsureOneOf<
@@ -393,7 +400,7 @@ impl pallet_staking::Config for Runtime {
 	// A super-majority of the council can cancel the slash.
 	type SlashCancelOrigin = SlashCancelOrigin;
 	type SessionInterface = Self;
-	type RewardCurve = RewardCurve;
+	type EraPayout = pallet_staking::ConvertCurve<RewardCurve>;
 	type MaxNominatorRewardedPerValidator = MaxNominatorRewardedPerValidator;
 	type NextNewSession = Session;
 	type ElectionLookahead = ElectionLookahead;
@@ -681,7 +688,7 @@ impl pallet_im_online::Config for Runtime {
 	type AuthorityId = ImOnlineId;
 	type Event = Event;
 	type ValidatorSet = Historical;
-	type SessionDuration = SessionDuration;
+	type NextSessionRotation = Babe;
 	type ReportUnresponsiveness = Offences;
 	type UnsignedPriority = ImOnlineUnsignedPriority;
 	type WeightInfo = weights::pallet_im_online::WeightInfo<Runtime>;
@@ -959,13 +966,6 @@ impl pallet_proxy::Config for Runtime {
 	type AnnouncementDepositFactor = AnnouncementDepositFactor;
 }
 
-pub struct CustomOnRuntimeUpgrade;
-impl frame_support::traits::OnRuntimeUpgrade for CustomOnRuntimeUpgrade {
-	fn on_runtime_upgrade() -> frame_support::weights::Weight {
-		0
-	}
-}
-
 construct_runtime! {
 	pub enum Runtime where
 		Block = Block,
@@ -1031,6 +1031,21 @@ construct_runtime! {
 	}
 }
 
+impl pallet_babe::migrations::BabePalletPrefix for Runtime {
+	fn pallet_prefix() -> &'static str {
+		"Babe"
+	}
+}
+
+pub struct BabeEpochConfigMigrations;
+impl frame_support::traits::OnRuntimeUpgrade for BabeEpochConfigMigrations {
+	fn on_runtime_upgrade() -> frame_support::weights::Weight {
+		pallet_babe::migrations::add_epoch_configuration::<Runtime>(
+			BABE_GENESIS_EPOCH_CONFIG,
+		)
+	}
+}
+
 /// The address format for describing accounts.
 pub type Address = sp_runtime::MultiAddress<AccountId, ()>;
 /// Block header type as expected by this runtime.
@@ -1063,10 +1078,58 @@ pub type Executive = frame_executive::Executive<
 	frame_system::ChainContext<Runtime>,
 	Runtime,
 	AllModules,
-	()
+	(BabeEpochConfigMigrations, FixPolkadotCouncilVotersDeposit),
 >;
 /// The payload being signed in transactions.
 pub type SignedPayload = generic::SignedPayload<Call, SignedExtra>;
+
+pub struct FixPolkadotCouncilVotersDeposit;
+impl frame_support::traits::OnRuntimeUpgrade for FixPolkadotCouncilVotersDeposit {
+	fn on_runtime_upgrade() -> Weight {
+		use pallet_elections_phragmen::Voter;
+		use frame_support::IterableStorageMap;
+		let mut updated = 0;
+		let mut skipped = 0;
+		let mut correct = 0;
+		pallet_elections_phragmen::Voting::<Runtime>::translate::<Voter<AccountId, Balance>, _>(
+			|_who, mut vote| {
+				if vote.deposit == 5 * CENTS {
+					// If their deposit is what we set by mistake
+					vote.deposit = 5 * DOLLARS;
+					updated += 1;
+				} else if vote.deposit == 5 * DOLLARS {
+					correct += 1;
+				} else {
+					skipped += 1;
+				}
+				Some(vote)
+			},
+		);
+
+		log::info!(
+			target: "runtime::polkadot",
+			"updated {} (updated) + {} (correct) + {} (skipped) voter's deposit.",
+			updated,
+			correct,
+			skipped,
+		);
+		BlockWeights::get().max_block
+	}
+
+	#[cfg(feature = "try-runtime")]
+	fn post_upgrade() -> Result<(), &'static str> {
+		use frame_support::IterableStorageMap;
+		log::info!("Checking FixPolkadotCouncilVotersDeposit post migration");
+		// no further vote with the wrong 5 CENT deposit shall exist.
+		assert!(
+			pallet_elections_phragmen::Voting::<Runtime>::iter().all(
+				|(_, vote)| vote.deposit != 5 * CENTS
+			)
+		);
+
+		Ok(())
+	}
+}
 
 #[cfg(not(feature = "disable-runtime-api"))]
 sp_api::impl_runtime_apis! {
@@ -1111,7 +1174,7 @@ sp_api::impl_runtime_apis! {
 		}
 
 		fn random_seed() -> <Block as BlockT>::Hash {
-			RandomnessCollectiveFlip::random_seed()
+			pallet_babe::RandomnessFromOneEpochAgo::<Runtime>::random_seed().0
 		}
 	}
 
@@ -1232,10 +1295,10 @@ sp_api::impl_runtime_apis! {
 			babe_primitives::BabeGenesisConfiguration {
 				slot_duration: Babe::slot_duration(),
 				epoch_length: EpochDuration::get(),
-				c: PRIMARY_PROBABILITY,
+				c: BABE_GENESIS_EPOCH_CONFIG.c,
 				genesis_authorities: Babe::authorities(),
 				randomness: Babe::randomness(),
-				allowed_slots: babe_primitives::AllowedSlots::PrimaryAndSecondaryVRFSlots,
+				allowed_slots: BABE_GENESIS_EPOCH_CONFIG.allowed_slots,
 			}
 		}
 

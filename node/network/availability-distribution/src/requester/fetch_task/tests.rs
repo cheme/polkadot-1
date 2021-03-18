@@ -15,7 +15,7 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+
 
 use parity_scale_codec::Encode;
 
@@ -23,15 +23,16 @@ use futures::channel::{mpsc, oneshot};
 use futures::{executor, Future, FutureExt, StreamExt, select};
 use futures::task::{Poll, Context, noop_waker};
 
-use polkadot_erasure_coding::{obtain_chunks_v1 as obtain_chunks, branches};
 use sc_network as network;
 use sp_keyring::Sr25519Keyring;
 
-use polkadot_primitives::v1::{AvailableData, BlockData, CandidateHash, HeadData, PersistedValidationData, PoV, ValidatorIndex};
+use polkadot_primitives::v1::{BlockData, CandidateHash, PoV, ValidatorIndex};
 use polkadot_node_network_protocol::request_response::v1;
+use polkadot_node_network_protocol::request_response::Recipient;
 use polkadot_subsystem::messages::AllMessages;
 
 use crate::metrics::Metrics;
+use crate::tests::mock::get_valid_chunk_data;
 use super::*;
 
 #[test]
@@ -56,7 +57,7 @@ fn task_does_not_accept_invalid_chunk() {
 		chunk_responses:  {
 			let mut m = HashMap::new();
 			m.insert(
-				Sr25519Keyring::Alice.public().into(),
+				Recipient::Authority(Sr25519Keyring::Alice.public().into()),
 				AvailabilityFetchingResponse::Chunk(
 					v1::ChunkResponse {
 						chunk: vec![1,2,3],
@@ -74,7 +75,10 @@ fn task_does_not_accept_invalid_chunk() {
 #[test]
 fn task_stores_valid_chunk() {
 	let (mut task, rx) = get_test_running_task();
-	let (root_hash, chunk) = get_valid_chunk_data();
+	let pov = PoV {
+		block_data: BlockData(vec![45, 46, 47]),
+	};
+	let (root_hash, chunk) = get_valid_chunk_data(pov);
 	task.erasure_root = root_hash;
 	task.request.index = chunk.index;
 
@@ -85,7 +89,7 @@ fn task_stores_valid_chunk() {
 		chunk_responses:  {
 			let mut m = HashMap::new();
 			m.insert(
-				Sr25519Keyring::Alice.public().into(),
+				Recipient::Authority(Sr25519Keyring::Alice.public().into()),
 				AvailabilityFetchingResponse::Chunk(
 					v1::ChunkResponse {
 						chunk: chunk.chunk.clone(),
@@ -107,7 +111,10 @@ fn task_stores_valid_chunk() {
 #[test]
 fn task_does_not_accept_wrongly_indexed_chunk() {
 	let (mut task, rx) = get_test_running_task();
-	let (root_hash, chunk) = get_valid_chunk_data();
+	let pov = PoV {
+		block_data: BlockData(vec![45, 46, 47]),
+	};
+	let (root_hash, chunk) = get_valid_chunk_data(pov);
 	task.erasure_root = root_hash;
 	task.request.index = ValidatorIndex(chunk.index.0+1);
 
@@ -118,7 +125,7 @@ fn task_does_not_accept_wrongly_indexed_chunk() {
 		chunk_responses:  {
 			let mut m = HashMap::new();
 			m.insert(
-				Sr25519Keyring::Alice.public().into(),
+				Recipient::Authority(Sr25519Keyring::Alice.public().into()),
 				AvailabilityFetchingResponse::Chunk(
 					v1::ChunkResponse {
 						chunk: chunk.chunk.clone(),
@@ -137,7 +144,10 @@ fn task_does_not_accept_wrongly_indexed_chunk() {
 #[test]
 fn task_stores_valid_chunk_if_there_is_one() {
 	let (mut task, rx) = get_test_running_task();
-	let (root_hash, chunk) = get_valid_chunk_data();
+	let pov = PoV {
+		block_data: BlockData(vec![45, 46, 47]),
+	};
+	let (root_hash, chunk) = get_valid_chunk_data(pov);
 	task.erasure_root = root_hash;
 	task.request.index = chunk.index;
 
@@ -154,7 +164,7 @@ fn task_stores_valid_chunk_if_there_is_one() {
 		chunk_responses:  {
 			let mut m = HashMap::new();
 			m.insert(
-				Sr25519Keyring::Alice.public().into(),
+				Recipient::Authority(Sr25519Keyring::Alice.public().into()),
 				AvailabilityFetchingResponse::Chunk(
 					v1::ChunkResponse {
 						chunk: chunk.chunk.clone(),
@@ -163,11 +173,11 @@ fn task_stores_valid_chunk_if_there_is_one() {
 				)
 			);
 			m.insert(
-				Sr25519Keyring::Bob.public().into(),
+				Recipient::Authority(Sr25519Keyring::Bob.public().into()),
 				AvailabilityFetchingResponse::NoSuchChunk
 			);
 			m.insert(
-				Sr25519Keyring::Charlie.public().into(),
+				Recipient::Authority(Sr25519Keyring::Charlie.public().into()),
 				AvailabilityFetchingResponse::Chunk(
 					v1::ChunkResponse {
 						chunk: vec![1,2,3],
@@ -190,7 +200,7 @@ fn task_stores_valid_chunk_if_there_is_one() {
 struct TestRun {
 	/// Response to deliver for a given validator index.
 	/// None means, answer with NetworkError.
-	chunk_responses: HashMap<AuthorityDiscoveryId, AvailabilityFetchingResponse>,
+	chunk_responses: HashMap<Recipient, AvailabilityFetchingResponse>,
 	/// Set of chunks that should be considered valid:
 	valid_chunks: HashSet<Vec<u8>>,
 }
@@ -231,11 +241,12 @@ impl TestRun {
 	/// end.
 	async fn handle_message(&self, msg: AllMessages) -> bool {
 		match msg {
-			AllMessages::NetworkBridge(NetworkBridgeMessage::SendRequests(reqs)) => {
+			AllMessages::NetworkBridge(NetworkBridgeMessage::SendRequests(reqs, IfDisconnected::TryConnect)) => {
 				let mut valid_responses = 0;
 				for req in reqs {
 					let req = match req {
 						Requests::AvailabilityFetching(req) => req,
+						_ => panic!("Unexpected request"),
 					};
 					let response = self.chunk_responses.get(&req.peer)
 						.ok_or(network::RequestFailure::Refused);
@@ -282,34 +293,9 @@ fn get_test_running_task() -> (RunningTask, mpsc::Receiver<FromFetchTask>) {
 			relay_parent: Hash::repeat_byte(71),
 			sender: tx,
 			metrics: Metrics::new_dummy(),
+			span: jaeger::Span::Disabled,
 		},
 		rx
 	)
 }
 
-fn get_valid_chunk_data() -> (Hash, ErasureChunk) {
-	let fake_validator_count = 10;
-	let persisted = PersistedValidationData {
-		parent_head: HeadData(vec![7, 8, 9]),
-		relay_parent_number: Default::default(),
-		max_pov_size: 1024,
-		relay_parent_storage_root: Default::default(),
-	};
-	let pov_block = PoV {
-		block_data: BlockData(vec![45, 46, 47]),
-	};
-	let available_data = AvailableData {
-		validation_data: persisted, pov: Arc::new(pov_block),
-	};
-	let chunks = obtain_chunks(fake_validator_count, &available_data).unwrap();
-	let branches = branches(chunks.as_ref());
-	let root = branches.root();
-	let chunk = branches.enumerate()
-			.map(|(index, (proof, chunk))| ErasureChunk {
-				chunk: chunk.to_vec(),
-				index: ValidatorIndex(index as _),
-				proof,
-			})
-			.next().expect("There really should be 10 chunks.");
-	(root, chunk)
-}
