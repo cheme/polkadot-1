@@ -183,7 +183,7 @@ impl ExecutorCache {
 	pub fn new(cache_base_path: Option<PathBuf>) -> ExecutorCache {
 		ExecutorCache(sc_executor::WasmExecutor::new(
 			#[cfg(all(feature = "wasmtime", not(any(target_os = "android", target_os = "unknown"))))]
-			sc_executor::WasmExecutionMethod::Compiled,
+			sc_executor::WasmExecutionMethod::Compiled(false),
 			#[cfg(any(not(feature = "wasmtime"), target_os = "android", target_os = "unknown"))]
 			sc_executor::WasmExecutionMethod::Interpreted,
 			// TODO: Make sure we don't use more than 1GB: https://github.com/paritytech/polkadot/issues/699
