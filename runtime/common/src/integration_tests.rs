@@ -107,6 +107,7 @@ impl frame_system::Config for Test {
 	type OnKilledAccount = ();
 	type SystemWeightInfo = ();
 	type SS58Prefix = ();
+	type OnSetCode = ();
 }
 
 parameter_types! {
@@ -225,8 +226,6 @@ impl crowdloan::Config for Test {
 	type ModuleId = CrowdloanId;
 	type SubmissionDeposit = SubmissionDeposit;
 	type MinContribution = MinContribution;
-	type RetirementPeriod = RetirementPeriod;
-	type OrphanedFunds = ();
 	type RemoveKeysLimit = RemoveKeysLimit;
 	type Registrar = Registrar;
 	type Auctioneer = Auctions;
