@@ -20,10 +20,6 @@
 
 #![warn(missing_docs)]
 
-#[cfg(test)]
-mod tests;
-
-
 use std::collections::{BTreeMap, HashMap, HashSet, hash_map};
 use futures::{channel::oneshot, FutureExt as _};
 use polkadot_primitives::v1::{
@@ -46,6 +42,9 @@ use polkadot_node_subsystem_util::{
 use polkadot_node_network_protocol::{
 	PeerId, View, v1 as protocol_v1, UnifiedReputationChange as Rep,
 };
+
+#[cfg(test)]
+mod tests;
 
 const LOG_TARGET: &str = "parachain::approval-distribution";
 
@@ -625,13 +624,29 @@ impl State {
 					if let Some(peer_knowledge) = entry.known_by.get_mut(&peer_id) {
 						peer_knowledge.received.insert(fingerprint);
 					}
+					tracing::debug!(
+						target: LOG_TARGET,
+						?peer_id,
+						"Got an `AcceptedDuplicate` assignment",
+					);
 					return;
 				}
 				AssignmentCheckResult::TooFarInFuture => {
+					tracing::debug!(
+						target: LOG_TARGET,
+						?peer_id,
+						"Got an assignment too far in the future",
+					);
 					modify_reputation(ctx, peer_id, COST_ASSIGNMENT_TOO_FAR_IN_THE_FUTURE).await;
 					return;
 				}
-				AssignmentCheckResult::Bad => {
+				AssignmentCheckResult::Bad(error) => {
+					tracing::info!(
+						target: LOG_TARGET,
+						?peer_id,
+						%error,
+						"Got a bad assignment from peer",
+					);
 					modify_reputation(ctx, peer_id, COST_INVALID_MESSAGE).await;
 					return;
 				}
@@ -845,11 +860,12 @@ impl State {
 						peer_knowledge.received.insert(fingerprint.clone());
 					}
 				}
-				ApprovalCheckResult::Bad => {
+				ApprovalCheckResult::Bad(error) => {
 					modify_reputation(ctx, peer_id, COST_INVALID_MESSAGE).await;
 					tracing::info!(
 						target: LOG_TARGET,
 						?peer_id,
+						%error,
 						"Got a bad approval from peer",
 					);
 					return;
@@ -1102,7 +1118,6 @@ impl State {
 
 
 /// Modify the reputation of a peer based on its behavior.
-#[tracing::instrument(level = "trace", skip(ctx), fields(subsystem = LOG_TARGET))]
 async fn modify_reputation(
 	ctx: &mut impl SubsystemContext<Message = ApprovalDistributionMessage>,
 	peer_id: PeerId,
@@ -1126,7 +1141,6 @@ impl ApprovalDistribution {
 		Self { metrics }
 	}
 
-	#[tracing::instrument(skip(self, ctx), fields(subsystem = LOG_TARGET))]
 	async fn run<Context>(self, ctx: Context)
 	where
 		Context: SubsystemContext<Message = ApprovalDistributionMessage>,
@@ -1136,7 +1150,6 @@ impl ApprovalDistribution {
 	}
 
 	/// Used for testing.
-	#[tracing::instrument(skip(self, ctx, state), fields(subsystem = LOG_TARGET))]
 	async fn run_inner<Context>(self, mut ctx: Context, state: &mut State)
 	where
 		Context: SubsystemContext<Message = ApprovalDistributionMessage>,
